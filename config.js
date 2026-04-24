@@ -6,7 +6,7 @@
 
 const CONFIG = {
   SUPABASE_URL: 'https://imfcznasbmwkvivvximl.supabase.co',
-  SUPABASE_ANON_KEY: 'sb_publishable_UITRvWiXnd1Wjs9msiSq3Q_ipP9BXOV',
+  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImltZmN6bmFzYm13a3ZpdnZ4aW1sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5OTg4MjYsImV4cCI6MjA5MjU3NDgyNn0.fXal5sXXIG98bWE6fgWDto4s7YP9PZD8YMgAihvXCK8',
 
   // World settings
   WORLD_WIDTH: 300,
