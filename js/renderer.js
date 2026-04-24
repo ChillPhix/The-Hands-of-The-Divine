@@ -368,6 +368,134 @@ class Renderer {
       }
     }
 
+    // ─── Agent Sprites ──────────────────────────────────────────
+    if (this.agentManager && zoom >= 2) {
+      const visibleAgents = this.agentManager.getVisibleAgents(startTileX, startTileY, endTileX, endTileY);
+      for (const agent of visibleAgents) {
+        if (this._isHiddenFromMe(agent.religionIndex)) continue;
+        const typeInfo = AGENT_TYPES[agent.type];
+        if (!typeInfo) continue;
+        const rel = this.religions[agent.religionIndex];
+        const relColor = rel?.color || '#888';
+
+        const ax = agent.x * ts;
+        const ay = agent.y * ts;
+
+        if (zoom >= 5 && SPRITE_DATA[agent.type]) {
+          // Draw pixel sprite
+          const sprite = SPRITE_DATA[agent.type];
+          const pixSize = ts * 0.15;
+          const spriteW = 5 * pixSize;
+          const spriteH = 7 * pixSize;
+          const sx = ax + ts/2 - spriteW/2;
+          const sy = ay + ts/2 - spriteH/2;
+
+          for (let row = 0; row < 7; row++) {
+            for (let col = 0; col < 5; col++) {
+              const val = sprite[row][col];
+              if (val === 0) continue;
+              switch (val) {
+                case 1: ctx.fillStyle = relColor; break;      // body in religion color
+                case 2: ctx.fillStyle = '#e8c8a0'; break;     // skin
+                case 3: ctx.fillStyle = '#f0d060'; break;     // accent/gold
+                case 4: ctx.fillStyle = '#aaaaaa'; break;     // weapon/item
+              }
+              ctx.globalAlpha = 0.9;
+              ctx.fillRect(sx + col * pixSize, sy + row * pixSize, pixSize, pixSize);
+            }
+          }
+          ctx.globalAlpha = 1;
+
+          // Name label for heroes
+          if (agent.type === 'hero' && zoom >= 6) {
+            ctx.fillStyle = '#f0d060';
+            ctx.globalAlpha = 0.85;
+            ctx.font = `${Math.max(1, 1.8/zoom * ts)}px monospace`;
+            ctx.textAlign = 'center';
+            ctx.fillText(agent.name, ax + ts/2, sy - pixSize);
+            ctx.globalAlpha = 1;
+          }
+        } else {
+          // Simple colored dot at lower zoom
+          const dotSize = Math.max(1, ts * 0.4);
+          ctx.fillStyle = typeInfo.color;
+          ctx.globalAlpha = 0.85;
+          ctx.fillRect(ax + ts/2 - dotSize/2, ay + ts/2 - dotSize/2, dotSize, dotSize);
+          ctx.globalAlpha = 1;
+        }
+      }
+    }
+
+    // ─── Terrain Details (trees, rocks at zoom) ─────────────────
+    if (zoom >= 4) {
+      for (let y = startTileY; y < endTileY; y++) {
+        for (let x = startTileX; x < endTileX; x++) {
+          const idx = y * this.world.width + x;
+          const terrain = this.world.tiles[idx];
+          const px = x * ts;
+          const py = y * ts;
+          const hash = ((x * 31 + y * 17) ^ (x * 7)) & 0xFF;
+
+          if (terrain === TERRAIN.FOREST || terrain === TERRAIN.DENSE_FOREST) {
+            // Pixel trees
+            if (hash < 120) {
+              const treeH = ts * 0.6;
+              const treeW = ts * 0.3;
+              const tx = px + (hash % 3) * ts * 0.25 + ts * 0.1;
+              const ty = py + ts * 0.1;
+              // Trunk
+              ctx.fillStyle = '#5a3a1a';
+              ctx.globalAlpha = 0.6;
+              ctx.fillRect(tx + treeW * 0.3, ty + treeH * 0.6, treeW * 0.4, treeH * 0.4);
+              // Canopy
+              ctx.fillStyle = terrain === TERRAIN.DENSE_FOREST ? '#1a4a0e' : '#2a6a1e';
+              ctx.fillRect(tx, ty, treeW, treeH * 0.7);
+              ctx.globalAlpha = 1;
+            }
+          } else if (terrain === TERRAIN.MOUNTAIN || terrain === TERRAIN.SNOW) {
+            // Mountain peaks
+            if (hash < 80) {
+              const peakH = ts * 0.5;
+              const peakW = ts * 0.4;
+              const mx = px + ts * 0.3;
+              const my = py + ts * 0.15;
+              ctx.fillStyle = terrain === TERRAIN.SNOW ? '#d8d8e8' : '#7a7a7a';
+              ctx.globalAlpha = 0.5;
+              // Triangle-ish peak
+              ctx.fillRect(mx + peakW * 0.25, my, peakW * 0.5, peakH * 0.3);
+              ctx.fillRect(mx + peakW * 0.1, my + peakH * 0.3, peakW * 0.8, peakH * 0.3);
+              ctx.fillRect(mx, my + peakH * 0.6, peakW, peakH * 0.4);
+              // Snow cap
+              if (terrain === TERRAIN.MOUNTAIN && hash < 40) {
+                ctx.fillStyle = '#e8e8f0';
+                ctx.fillRect(mx + peakW * 0.3, my, peakW * 0.4, peakH * 0.2);
+              }
+              ctx.globalAlpha = 1;
+            }
+          }
+        }
+      }
+    }
+
+    // ─── Resource deposit markers ───────────────────────────────
+    if (this.resourceManager && zoom >= 5) {
+      for (const [key, dep] of Object.entries(this.resourceManager.deposits)) {
+        const [dx, dy] = key.split('_').map(Number);
+        if (dx < startTileX || dx > endTileX || dy < startTileY || dy > endTileY) continue;
+        const px = dx * ts;
+        const py = dy * ts;
+        const resInfo = CONFIG.RESOURCES[dep.resource];
+        if (!resInfo) continue;
+
+        // Small colored marker
+        ctx.fillStyle = resInfo.color;
+        ctx.globalAlpha = 0.6;
+        const mSize = Math.max(1, ts * 0.25);
+        ctx.fillRect(px + ts - mSize - 0.5, py + 0.5, mSize, mSize);
+        ctx.globalAlpha = 1;
+      }
+    }
+
     // ─── Holy Sites ─────────────────────────────────────────────
     if (this.holySites) {
       for (const hs of this.holySites) {

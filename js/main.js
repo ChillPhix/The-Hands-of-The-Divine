@@ -162,6 +162,18 @@ class Game {
     this.settlementManager.update(this.tickCount);
     this.renderer.settlementManager = this.settlementManager;
 
+    // Resource manager
+    this.resourceManager = new ResourceManager(this.world);
+    this.resourceManager.generateDeposits(CONFIG.WORLD_SEED);
+    for (const rel of this.religions) {
+      this.resourceManager.initStockpile(rel.index);
+    }
+    this.renderer.resourceManager = this.resourceManager;
+
+    // Agent manager
+    this.agentManager = new AgentManager(this.world, this.religions);
+    this.renderer.agentManager = this.agentManager;
+
     if (this.myReligion) {
       this.renderer.myReligionIndex = this.myReligion.index;
     }
@@ -242,6 +254,17 @@ class Game {
     this.tickCount++;
     this.events.push(...newEvents);
     this.dirty = true;
+
+    // Resources
+    if (this.resourceManager) {
+      this.resourceManager.gatherTick(this.religions);
+    }
+
+    // Agents
+    if (this.agentManager) {
+      const settlements = this.settlementManager?.settlements || [];
+      this.agentManager.update(this.tickCount, this.resourceManager, settlements);
+    }
 
     if (this.settlementManager) {
       this.settlementManager.update(this.tickCount);
@@ -372,6 +395,16 @@ class Game {
 
     localStorage.setItem('hotd_myReligionId', religion.id);
     await this.storage.saveReligion(religion);
+
+    // Init resources for this religion
+    if (this.resourceManager) {
+      this.resourceManager.initStockpile(religion.index);
+    }
+
+    // Spawn starting agents
+    if (this.agentManager) {
+      this.agentManager.spawnStartingAgents(religion.index, x, y, this.tickCount);
+    }
 
     const event = {
       tick: this.tickCount, type: 'religion_created',

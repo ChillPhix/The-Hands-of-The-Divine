@@ -15,6 +15,8 @@ class UI {
     this.religionColor = '#e63946';
     this.creatorName = '';
     this.traitFilter = 'ALL';
+    this.useCustomSymbol = false;
+    this.selectedPremadeSymbol = 0;
 
     // HUD state
     this.showEventLog = true;
@@ -161,15 +163,29 @@ class UI {
 
           <div class="create-row">
             <div class="create-section" style="flex:0 0 auto">
-              <label class="create-label">DRAW YOUR SYMBOL</label>
-              <div class="symbol-area">
-                <canvas id="symbolCanvas" width="16" height="16"></canvas>
-                <div class="symbol-tools">
-                  <button class="sym-tool active" id="symDraw" title="Draw">✏️</button>
-                  <button class="sym-tool" id="symErase" title="Erase">🧹</button>
-                  <button class="sym-tool" id="symClear" title="Clear">🗑️</button>
-                </div>
+              <label class="create-label">HOLY SYMBOL</label>
+              <div class="symbol-tabs">
+                <button class="sym-tab ${!this.useCustomSymbol ? 'active' : ''}" id="symTabPremade">Premade</button>
+                <button class="sym-tab ${this.useCustomSymbol ? 'active' : ''}" id="symTabCustom">Draw Custom</button>
               </div>
+              ${this.useCustomSymbol ? `
+                <div class="symbol-area">
+                  <canvas id="symbolCanvas" width="16" height="16"></canvas>
+                  <div class="symbol-tools">
+                    <button class="sym-tool active" id="symDraw" title="Draw">✏️</button>
+                    <button class="sym-tool" id="symErase" title="Erase">🧹</button>
+                    <button class="sym-tool" id="symClear" title="Clear">🗑️</button>
+                  </div>
+                </div>
+              ` : `
+                <div class="premade-symbols">
+                  ${(typeof PREMADE_SYMBOLS !== 'undefined' ? PREMADE_SYMBOLS : []).map((s, i) => `
+                    <button class="premade-sym-btn ${this.selectedPremadeSymbol === i ? 'active' : ''}" data-sym="${i}" title="${s.name}">
+                      <canvas class="premade-sym-canvas" data-sym-idx="${i}" width="16" height="16"></canvas>
+                    </button>
+                  `).join('')}
+                </div>
+              `}
             </div>
             <div class="create-section" style="flex:1">
               <label class="create-label">SACRED COLOR</label>
@@ -241,20 +257,64 @@ class UI {
       });
     });
 
-    document.getElementById('symDraw').addEventListener('click', () => { this.drawColor = 1; this.buildUI(); });
-    document.getElementById('symErase').addEventListener('click', () => { this.drawColor = 0; this.buildUI(); });
-    document.getElementById('symClear').addEventListener('click', () => {
-      this.symbolData = new Uint8Array(16 * 16);
-      this.buildUI();
+    // Symbol tab toggles
+    const symTabPremade = document.getElementById('symTabPremade');
+    const symTabCustom = document.getElementById('symTabCustom');
+    if (symTabPremade) symTabPremade.addEventListener('click', () => { this.useCustomSymbol = false; this.buildUI(); });
+    if (symTabCustom) symTabCustom.addEventListener('click', () => { this.useCustomSymbol = true; this.buildUI(); });
+
+    // Premade symbol selection
+    document.querySelectorAll('.premade-sym-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.selectedPremadeSymbol = parseInt(btn.dataset.sym);
+        if (typeof PREMADE_SYMBOLS !== 'undefined') {
+          this.symbolData = new Uint8Array(PREMADE_SYMBOLS[this.selectedPremadeSymbol].data);
+        }
+        this.buildUI();
+      });
     });
+    // Render premade symbol canvases
+    document.querySelectorAll('.premade-sym-canvas').forEach(canvas => {
+      const idx = parseInt(canvas.dataset.symIdx);
+      if (typeof PREMADE_SYMBOLS !== 'undefined' && PREMADE_SYMBOLS[idx]) {
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+        for (let y = 0; y < 16; y++) {
+          for (let x = 0; x < 16; x++) {
+            if (PREMADE_SYMBOLS[idx].data[y * 16 + x]) {
+              ctx.fillStyle = this.religionColor;
+              ctx.fillRect(x, y, 1, 1);
+            }
+          }
+        }
+      }
+    });
+
+    // Custom draw tools
+    const symDraw = document.getElementById('symDraw');
+    const symErase = document.getElementById('symErase');
+    const symClear = document.getElementById('symClear');
+    if (symDraw) symDraw.addEventListener('click', () => { this.drawColor = 1; this.buildUI(); });
+    if (symErase) symErase.addEventListener('click', () => { this.drawColor = 0; this.buildUI(); });
+    if (symClear) symClear.addEventListener('click', () => { this.symbolData = new Uint8Array(16 * 16); this.buildUI(); });
+
+    // Initialize symbol data from premade if not custom
+    if (!this.useCustomSymbol && !this.symbolData && typeof PREMADE_SYMBOLS !== 'undefined') {
+      this.symbolData = new Uint8Array(PREMADE_SYMBOLS[this.selectedPremadeSymbol].data);
+    }
 
     document.getElementById('btnManifest').addEventListener('click', () => {
       if (this.religionName.trim()) {
+        // Use premade symbol data if not custom
+        let symData = this.symbolData;
+        if (!this.useCustomSymbol && typeof PREMADE_SYMBOLS !== 'undefined') {
+          symData = new Uint8Array(PREMADE_SYMBOLS[this.selectedPremadeSymbol].data);
+        }
         this.game.createReligion({
           name: this.religionName.trim(),
           color: this.religionColor,
           traits: this.selectedTraits,
-          symbol_data: JSON.stringify(Array.from(this.symbolData || new Uint8Array(256))),
+          symbol_data: JSON.stringify(Array.from(symData || new Uint8Array(256))),
           creator_name: this.creatorName.trim() || 'Anonymous',
         });
       }
@@ -435,10 +495,13 @@ class UI {
           <span class="hud-name" style="color:${rel.color}">${rel.name}</span>
         </div>
         <div class="hud-stats">
-          <span class="hud-stat">🗺️ ${myStats.tiles} tiles</span>
+          <span class="hud-stat">🗺️ ${myStats.tiles}</span>
           <span class="hud-stat">👥 ${myStats.population}</span>
-          <span class="hud-stat">📿 ${myStats.avgFaith}%</span>
           <span class="hud-stat divine-power">⚡ ${Math.floor(rel.divine_power || 0)}</span>
+          ${this.game.resourceManager ? (() => {
+            const s = this.game.resourceManager.getStockpile(rel.index);
+            return `<span class="hud-stat res">🪵${Math.floor(s.wood)} 🪨${Math.floor(s.stone)} ⛏️${Math.floor(s.iron)} 🪙${Math.floor(s.gold)} 🌾${Math.floor(s.food)}</span>`;
+          })() : ''}
         </div>
         <div class="hud-tick">
           Tick ${this.game.tickCount || 0}

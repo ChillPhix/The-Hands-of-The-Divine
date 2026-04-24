@@ -553,6 +553,33 @@
     }
     .gm-tools { display: flex; flex-direction: column; gap: 4px; }
     .gm-active { border-color: var(--gold) !important; color: var(--gold) !important; box-shadow: 0 0 8px rgba(240,208,96,0.3); }
+
+    /* ─── Symbol tabs & premade grid ─────────────────────────── */
+    .symbol-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+    .sym-tab {
+      padding: 4px 10px; font-family: var(--font-body); font-size: 14px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      color: var(--text-dim); cursor: pointer; border-radius: 2px;
+    }
+    .sym-tab.active { border-color: var(--gold-dim); color: var(--gold); background: #1a1a3e; }
+    .premade-symbols {
+      display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px;
+      max-height: 160px; overflow-y: auto;
+    }
+    .premade-sym-btn {
+      width: 36px; height: 36px; padding: 2px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      cursor: pointer; border-radius: 2px;
+    }
+    .premade-sym-btn.active { border-color: var(--gold); background: #1a1a3e; }
+    .premade-sym-btn:hover { border-color: var(--text-dim); }
+    .premade-sym-canvas {
+      width: 32px; height: 32px; image-rendering: pixelated;
+      pointer-events: none;
+    }
+
+    /* ─── Resource display ────────────────────────────────────── */
+    .hud-stat.res { font-size: 12px; letter-spacing: 0.5px; }
   </style>
 </head>
 <body>
@@ -566,6 +593,9 @@
   <script src="js/config.js"></script>
   <script src="js/world.js"></script>
   <script src="js/traits.js"></script>
+  <script src="js/symbols.js"></script>
+  <script src="js/resources.js"></script>
+  <script src="js/agents.js"></script>
   <script src="js/simulation.js"></script>
   <script src="js/settlements.js"></script>
   <script src="js/renderer.js"></script>
