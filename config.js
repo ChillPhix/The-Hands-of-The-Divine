@@ -5,8 +5,8 @@
 // Find them at: Supabase Dashboard → Settings → API
 
 const CONFIG = {
-  SUPABASE_URL: 'YOUR_SUPABASE_URL_HERE',
-  SUPABASE_ANON_KEY: 'YOUR_SUPABASE_ANON_KEY_HERE',
+  SUPABASE_URL: 'https://imfcznasbmwkvivvximl.supabase.co',
+  SUPABASE_ANON_KEY: 'sb_publishable_UITRvWiXnd1Wjs9msiSq3Q_ipP9BXOV',
 
   // World settings
   WORLD_WIDTH: 300,
