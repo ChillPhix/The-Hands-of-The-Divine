@@ -495,6 +495,64 @@
       .menu-title { font-size: 14px; }
       .create-panel { padding: 16px; }
     }
+
+    /* ─── Kingdoms ────────────────────────────────────────────── */
+    .kingdom-list { display: flex; flex-direction: column; gap: 6px; }
+    .kingdom-row {
+      display: flex; align-items: flex-start; gap: 6px;
+      padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .kingdom-info { flex: 1; min-width: 0; }
+    .kingdom-name { font-size: 13px; font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kingdom-detail { font-size: 11px; color: var(--text-dim); line-height: 1.4; }
+
+    /* ─── Toggleable sections ────────────────────────────────── */
+    .sidebar-toggle { cursor: pointer; }
+    .sidebar-toggle:hover { color: #fff; }
+
+    /* ─── Spawn picker overlay ───────────────────────────────── */
+    .spawn-overlay {
+      position: absolute; top: 0; left: 0; right: 0;
+      z-index: 25; pointer-events: none;
+    }
+    .spawn-banner {
+      text-align: center; padding: 60px 20px 16px;
+      background: linear-gradient(180deg, rgba(10,10,20,0.95) 0%, transparent 100%);
+    }
+    .spawn-title {
+      font-family: var(--font-pixel);
+      font-size: 12px; color: var(--gold);
+      letter-spacing: 3px;
+      text-shadow: 0 0 20px rgba(240,208,96,0.3);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    .spawn-sub {
+      font-size: 16px; color: var(--text-dim);
+      margin-top: 8px; letter-spacing: 1px;
+    }
+
+    /* ─── GM Panel ───────────────────────────────────────────── */
+    .gm-toggle-btn {
+      background: none; border: none; cursor: pointer;
+      font-size: 14px; margin-left: 8px; opacity: 0.4;
+      vertical-align: middle;
+    }
+    .gm-toggle-btn:hover { opacity: 0.8; }
+    .gm-panel {
+      position: absolute; top: 48px; left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-panel); border: 1px solid var(--gold-dim);
+      border-radius: 4px; padding: 16px; z-index: 30;
+      min-width: 220px; box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+    }
+    .gm-title {
+      font-family: var(--font-pixel);
+      font-size: 8px; color: var(--gold);
+      letter-spacing: 2px; text-align: center;
+      margin-bottom: 10px;
+    }
+    .gm-tools { display: flex; flex-direction: column; gap: 4px; }
+    .gm-active { border-color: var(--gold) !important; color: var(--gold) !important; box-shadow: 0 0 8px rgba(240,208,96,0.3); }
   </style>
 </head>
 <body>
@@ -509,6 +567,7 @@
   <script src="js/world.js"></script>
   <script src="js/traits.js"></script>
   <script src="js/simulation.js"></script>
+  <script src="js/settlements.js"></script>
   <script src="js/renderer.js"></script>
   <script src="js/storage.js"></script>
   <script src="js/ui.js"></script>

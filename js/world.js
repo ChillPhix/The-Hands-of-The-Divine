@@ -151,6 +151,7 @@ function generateWorld(width, height, seed) {
   const noise = new SeededNoise(seed);
   const moistureNoise = new SeededNoise(seed + 1000);
   const tempNoise = new SeededNoise(seed + 2000);
+  const continentNoise = new SeededNoise(seed + 3000);
 
   const tiles = new Uint8Array(width * height);       // terrain type
   const population = new Uint16Array(width * height);  // population
@@ -163,32 +164,38 @@ function generateWorld(width, height, seed) {
     for (let x = 0; x < width; x++) {
       const idx = y * width + x;
 
-      // Generate elevation with island-like falloff
       const nx = x / width;
       const ny = y / height;
-      const distFromCenter = Math.sqrt((nx - 0.5) ** 2 + (ny - 0.5) ** 2) * 2;
-      const falloff = Math.max(0, 1 - distFromCenter * 0.9);
 
-      let elevation = noise.fbm(x * 0.008, y * 0.008, 6) * falloff;
-      // Add some continental shapes
-      elevation += noise.fbm(x * 0.003, y * 0.003, 3) * 0.3 * falloff;
+      // Multiple continent shapes — no single-island falloff
+      // Use large-scale noise to create continental shelves
+      const continentVal = continentNoise.fbm(x * 0.004, y * 0.004, 3);
+      // Slight edge falloff so borders are ocean (but much gentler)
+      const edgeDist = Math.min(nx, ny, 1 - nx, 1 - ny);
+      const edgeFalloff = Math.min(1, edgeDist * 8); // only affects outermost ~12%
+
+      let elevation = noise.fbm(x * 0.008, y * 0.008, 6);
+      // Continental masses — raises big blobs of land
+      elevation = elevation * 0.6 + continentVal * 0.4;
+      elevation *= edgeFalloff;
+
+      // Shift elevation up so more land than ocean (~60% land)
+      elevation += 0.08;
 
       const moisture = moistureNoise.fbm(x * 0.006, y * 0.006, 4);
       const temperature = tempNoise.fbm(x * 0.004, y * 0.004, 3);
-      // Latitude effect on temperature
       const latTemp = 1.0 - Math.abs(ny - 0.5) * 1.6;
-
       const temp = temperature * 0.4 + latTemp * 0.6;
 
       // Determine terrain
       let terrain;
-      if (elevation < 0.25) {
+      if (elevation < 0.22) {
         terrain = TERRAIN.DEEP_WATER;
-      } else if (elevation < 0.33) {
+      } else if (elevation < 0.30) {
         terrain = TERRAIN.WATER;
-      } else if (elevation < 0.36) {
+      } else if (elevation < 0.33) {
         terrain = TERRAIN.COAST;
-      } else if (elevation < 0.38) {
+      } else if (elevation < 0.35) {
         terrain = moisture > 0.5 ? TERRAIN.SAND : TERRAIN.COAST;
       } else if (elevation > 0.82) {
         terrain = TERRAIN.SNOW;
@@ -197,7 +204,6 @@ function generateWorld(width, height, seed) {
       } else if (elevation > 0.62) {
         terrain = TERRAIN.HILLS;
       } else {
-        // Biome based on moisture and temperature
         if (temp < 0.25) {
           terrain = moisture > 0.5 ? TERRAIN.TUNDRA : TERRAIN.SNOW;
         } else if (temp < 0.4) {
@@ -205,7 +211,7 @@ function generateWorld(width, height, seed) {
         } else if (temp > 0.7 && moisture < 0.35) {
           terrain = TERRAIN.DESERT;
         } else if (moisture > 0.7 && temp > 0.4) {
-          terrain = elevation < 0.45 ? TERRAIN.SWAMP : TERRAIN.DENSE_FOREST;
+          terrain = elevation < 0.42 ? TERRAIN.SWAMP : TERRAIN.DENSE_FOREST;
         } else if (moisture > 0.5) {
           terrain = TERRAIN.FOREST;
         } else if (moisture > 0.35) {
@@ -217,10 +223,9 @@ function generateWorld(width, height, seed) {
 
       tiles[idx] = terrain;
 
-      // Initial population based on terrain
+      // Initial population
       const cap = TERRAIN_POP_CAP[terrain];
       if (cap > 0) {
-        // Scattered initial population
         const popNoise = noise.fbm(x * 0.02, y * 0.02, 2);
         population[idx] = Math.floor(cap * popNoise * 0.4);
       }

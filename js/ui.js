@@ -19,6 +19,10 @@ class UI {
     // HUD state
     this.showEventLog = true;
     this.showStats = true;
+    this.showLeaderboard = true;
+    this.showChronicle = true;
+    this.showSpawnPicker = false;
+    this.showGMPanel = false;
     this.selectedMiracle = null;
     this.miracleCooldowns = {};
     this.tooltipData = null;
@@ -380,7 +384,50 @@ class UI {
       </div>
     `).join('');
 
+    // Kingdoms section
+    const sm = this.game.settlementManager;
+    let kingdomSection = '';
+    if (sm && sm.kingdoms.length > 0) {
+      const kingdomRows = sm.kingdoms
+        .sort((a, b) => b.territory - a.territory)
+        .map(k => {
+          const relColor = k.religion?.color || '#888';
+          const warTargets = Object.entries(k.relations || {}).filter(([_, r]) => r === 'war');
+          const peaceTargets = Object.entries(k.relations || {}).filter(([_, r]) => r === 'peace');
+          let relStatus = '';
+          if (warTargets.length > 0) {
+            relStatus = `<span style="color:#e63946;font-size:11px">⚔️ At war</span>`;
+          } else if (peaceTargets.length > 0) {
+            relStatus = `<span style="color:#2a9d8f;font-size:11px">☮️ Peace</span>`;
+          }
+          return `
+            <div class="kingdom-row">
+              <span class="score-color" style="background:${relColor}"></span>
+              <div class="kingdom-info">
+                <div class="kingdom-name" style="color:${relColor}">${k.name}</div>
+                <div class="kingdom-detail">👑 ${k.capitalName} · ${k.settlements.length} settlements · ${k.territory} tiles ${relStatus}</div>
+              </div>
+            </div>
+          `;
+        }).join('');
+      kingdomSection = `
+        <div class="sidebar-section">
+          <div class="sidebar-title">👑 Kingdoms</div>
+          <div class="kingdom-list">${kingdomRows}</div>
+        </div>
+      `;
+    }
+
     container.innerHTML = `
+      ${this.showSpawnPicker ? `
+        <div class="spawn-overlay">
+          <div class="spawn-banner">
+            <div class="spawn-title">🌍 CHOOSE YOUR STARTING LOCATION</div>
+            <div class="spawn-sub">Click anywhere on land to place your followers. Scroll and zoom to explore first.</div>
+          </div>
+        </div>
+      ` : ''}
+
       <!-- Top bar -->
       <div class="hud-top">
         <div class="hud-religion">
@@ -393,8 +440,34 @@ class UI {
           <span class="hud-stat">📿 ${myStats.avgFaith}%</span>
           <span class="hud-stat divine-power">⚡ ${Math.floor(rel.divine_power || 0)}</span>
         </div>
-        <div class="hud-tick">Tick ${this.game.tickCount || 0}</div>
+        <div class="hud-tick">
+          Tick ${this.game.tickCount || 0}
+          <button class="gm-toggle-btn" id="btnGMToggle" title="Game Master">⚙️</button>
+        </div>
       </div>
+
+      <!-- GM Panel -->
+      ${this.showGMPanel ? `
+        <div class="gm-panel">
+          ${this.game.isGM ? `
+            <div class="gm-title">⚙️ GAME MASTER</div>
+            <div class="gm-tools">
+              <button class="btn btn-sm ${this.game.gmTool === 'smite' ? 'gm-active' : ''}" id="gmSmite">💀 Smite Area</button>
+              <button class="btn btn-sm ${this.game.gmTool === 'bless_area' ? 'gm-active' : ''}" id="gmBless">🌟 Bless Area</button>
+              <button class="btn btn-sm ${this.game.gmTool === 'purge_faith' ? 'gm-active' : ''}" id="gmPurge">🌀 Purge Faith</button>
+              <button class="btn btn-sm" id="gmDeselect">✋ Deselect Tool</button>
+              <div style="border-top:1px solid #333;margin:8px 0;padding-top:8px">
+                <button class="btn btn-sm" style="border-color:#e63946;color:#e63946" id="gmReset">⚠️ RESET ENTIRE WORLD</button>
+              </div>
+            </div>
+          ` : `
+            <div class="gm-title">🔒 Game Master Login</div>
+            <input type="password" class="create-input" id="gmPassword" placeholder="Enter GM password" style="margin:8px 0">
+            <button class="btn btn-sm" id="gmLogin">Login</button>
+          `}
+          <button class="btn btn-sm" id="gmClose" style="margin-top:8px;opacity:0.5">Close</button>
+        </div>
+      ` : ''}
 
       <!-- Miracles bar -->
       <div class="hud-miracles">
@@ -409,12 +482,15 @@ class UI {
       <!-- Side panels -->
       <div class="hud-sidebar">
         <div class="sidebar-section">
-          <div class="sidebar-title" id="toggleStats">🏆 Dominion</div>
-          <div class="scoreboard">${scoreRows}</div>
+          <div class="sidebar-title sidebar-toggle" id="toggleLeaderboard">🏆 Leaderboard ${this.showLeaderboard ? '▾' : '▸'}</div>
+          ${this.showLeaderboard ? `<div class="scoreboard">${scoreRows}</div>` : ''}
         </div>
+
+        ${kingdomSection}
+
         <div class="sidebar-section">
-          <div class="sidebar-title">📜 Chronicle</div>
-          <div class="event-log">${eventRows || '<div class="event-row"><span class="event-desc" style="opacity:0.4">No events yet...</span></div>'}</div>
+          <div class="sidebar-title sidebar-toggle" id="toggleChronicle">📜 World Chronicle ${this.showChronicle ? '▾' : '▸'}</div>
+          ${this.showChronicle ? `<div class="event-log">${eventRows || '<div class="event-row"><span class="event-desc" style="opacity:0.4">The world is quiet...</span></div>'}</div>` : ''}
         </div>
         <div class="sidebar-section">
           <div class="sidebar-title">🏛️ Holy Sites</div>
@@ -443,6 +519,12 @@ class UI {
         }
       }
     }
+
+    // Toggle listeners
+    const toggleLB = document.getElementById('toggleLeaderboard');
+    if (toggleLB) toggleLB.addEventListener('click', () => { this.showLeaderboard = !this.showLeaderboard; this.buildUI(); });
+    const toggleChr = document.getElementById('toggleChronicle');
+    if (toggleChr) toggleChr.addEventListener('click', () => { this.showChronicle = !this.showChronicle; this.buildUI(); });
 
     // Miracle buttons
     document.querySelectorAll('.miracle-btn:not(.disabled)').forEach(btn => {
@@ -473,6 +555,39 @@ class UI {
         });
       }
     });
+
+    // GM panel
+    const gmToggle = document.getElementById('btnGMToggle');
+    if (gmToggle) gmToggle.addEventListener('click', () => { this.showGMPanel = !this.showGMPanel; this.buildUI(); });
+
+    const gmClose = document.getElementById('gmClose');
+    if (gmClose) gmClose.addEventListener('click', () => { this.showGMPanel = false; this.buildUI(); });
+
+    const gmLogin = document.getElementById('gmLogin');
+    if (gmLogin) {
+      gmLogin.addEventListener('click', () => {
+        const pw = document.getElementById('gmPassword')?.value || '';
+        if (this.game.tryGMLogin(pw)) { this.buildUI(); }
+        else { alert('Wrong password'); }
+      });
+    }
+
+    const gmSmite = document.getElementById('gmSmite');
+    if (gmSmite) gmSmite.addEventListener('click', () => { this.game.gmTool = this.game.gmTool === 'smite' ? null : 'smite'; this.buildUI(); });
+    const gmBless = document.getElementById('gmBless');
+    if (gmBless) gmBless.addEventListener('click', () => { this.game.gmTool = this.game.gmTool === 'bless_area' ? null : 'bless_area'; this.buildUI(); });
+    const gmPurge = document.getElementById('gmPurge');
+    if (gmPurge) gmPurge.addEventListener('click', () => { this.game.gmTool = this.game.gmTool === 'purge_faith' ? null : 'purge_faith'; this.buildUI(); });
+    const gmDeselect = document.getElementById('gmDeselect');
+    if (gmDeselect) gmDeselect.addEventListener('click', () => { this.game.gmTool = null; this.buildUI(); });
+    const gmReset = document.getElementById('gmReset');
+    if (gmReset) {
+      gmReset.addEventListener('click', () => {
+        if (confirm('RESET THE ENTIRE WORLD? This destroys all religions, territory, and progress. Cannot be undone.')) {
+          this.game.gmResetWorld();
+        }
+      });
+    }
   }
 
   // Update tooltip on hover
@@ -500,10 +615,33 @@ class UI {
       }
     }
 
+    // Check for settlement at this tile
+    let settlementInfo = '';
+    if (this.game.settlementManager) {
+      const s = this.game.settlementManager.settlements.find(
+        s => Math.abs(s.x - tileX) <= 1 && Math.abs(s.y - tileY) <= 1
+      );
+      if (s) {
+        const st = SETTLEMENT_TYPES[s.type];
+        settlementInfo = `<div style="color:${st?.color || '#ccc'}">${st?.icon || ''} ${s.name} (${st?.name || s.type})</div>`;
+      }
+    }
+
+    // Check for kingdom
+    let kingdomInfo = '';
+    if (owner >= 0 && this.game.settlementManager) {
+      const k = this.game.settlementManager.kingdoms.find(k => k.religionIndex === owner);
+      if (k) {
+        kingdomInfo = `<div style="opacity:0.6">👑 ${k.name}</div>`;
+      }
+    }
+
     tooltip.innerHTML = `
       <div><strong>${TERRAIN_NAMES[terrain] || 'Unknown'}</strong> (${tileX}, ${tileY})</div>
       <div>Pop: ${pop} / ${TERRAIN_POP_CAP[terrain] || 0}</div>
       <div>${ownerInfo}</div>
+      ${settlementInfo}
+      ${kingdomInfo}
     `;
     tooltip.style.display = 'block';
   }

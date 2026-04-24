@@ -2,6 +2,8 @@
 // THE HANDS OF THE DIVINE — Main Game
 // ============================================
 
+const GM_PASSWORD = 'divinemaster'; // Change this to your own password
+
 class Game {
   constructor() {
     this.world = null;
@@ -16,119 +18,123 @@ class Game {
     this.simulation = null;
     this.renderer = null;
     this.ui = null;
+    this.settlementManager = null;
 
     this.placingHolySite = null;
+    this.choosingSpawn = false; // spawn picker mode
+    this.pendingReligion = null; // religion data waiting for spawn
     this.lastSyncTick = 0;
     this.tickTimer = null;
     this.renderTimer = null;
     this.dirty = false;
-    this.dirtyChunks = new Set();
+
+    // GM mode
+    this.isGM = false;
+    this.gmTool = null; // current GM tool
   }
 
   async init() {
-    // Setup UI
     this.ui = new UI(this);
     this.ui.setScreen('loading');
 
-    // Connect to storage
+    // Connect to Supabase
     this.ui.setLoadProgress(10);
     const connected = await this.storage.init();
 
-    // Load or generate world
-    this.ui.setLoadProgress(30);
+    // ─── Load or generate shared world ──────────────────────────
+    this.ui.setLoadProgress(20);
     const worldState = await this.storage.loadWorldState();
-    const chunks = await this.storage.loadChunks();
+
+    this.ui.setLoadProgress(30);
+
+    // Always try to load chunks from Supabase first
+    let chunks = null;
+    if (connected) {
+      chunks = await this.storage.loadChunks();
+    }
 
     this.ui.setLoadProgress(50);
 
     if (chunks && Object.keys(chunks).length > 0) {
-      // Load existing world from storage
+      // ─── Existing world found — load it ─────────────────────
+      console.log('Loading shared world from Supabase...');
       this.world = chunksToWorld(chunks, CONFIG.WORLD_WIDTH, CONFIG.WORLD_HEIGHT);
       this.tickCount = worldState?.tick_count || 0;
+    } else {
+      // ─── No world exists yet — we're the first player ───────
+      console.log('No world found — generating new shared world...');
+      this.world = generateWorld(CONFIG.WORLD_WIDTH, CONFIG.WORLD_HEIGHT, CONFIG.WORLD_SEED);
+      this.tickCount = 0;
 
-      // Calculate catch-up ticks
-      if (worldState?.last_tick_at) {
-        const lastTick = new Date(worldState.last_tick_at).getTime();
-        const now = Date.now();
-        const elapsedMs = now - lastTick;
-        const missedTicks = Math.floor(elapsedMs / CONFIG.TICK_INTERVAL_MS);
+      // Save to Supabase so all other players get this same world
+      if (connected) {
+        const newChunks = worldToChunks(this.world);
+        await this.storage.saveChunks(newChunks);
+        await this.storage.saveWorldState(0);
+        console.log('Shared world saved to Supabase.');
+      }
+    }
 
-        if (missedTicks > 1) {
-          this.ui.setLoadProgress(60);
-          console.log(`Catching up ${missedTicks} ticks...`);
+    // ─── Load religions, holy sites, events ─────────────────────
+    this.ui.setLoadProgress(60);
+    this.religions = await this.storage.loadReligions();
+    this.holySites = await this.storage.loadHolySites();
+    this._assignReligionIndices();
+    this.events = await this.storage.loadRecentEvents(100);
 
-          // Load religions and holy sites first for simulation
-          this.religions = await this.storage.loadReligions();
-          this.holySites = await this.storage.loadHolySites();
-          this._assignReligionIndices();
+    // ─── Catch-up simulation ────────────────────────────────────
+    this.simulation = new Simulation(this.world, this.religions, this.holySites);
+    this.simulation.tickCount = this.tickCount;
 
-          this.simulation = new Simulation(this.world, this.religions, this.holySites);
-          this.simulation.tickCount = this.tickCount;
+    if (worldState?.last_tick_at && this.religions.length > 0) {
+      const lastTick = new Date(worldState.last_tick_at).getTime();
+      const now = Date.now();
+      const elapsedMs = now - lastTick;
+      const missedTicks = Math.floor(elapsedMs / CONFIG.TICK_INTERVAL_MS);
 
-          const catchupTicks = Math.min(missedTicks, CONFIG.MAX_CATCHUP_TICKS);
-          const batchSize = 100;
-          for (let i = 0; i < catchupTicks; i += batchSize) {
-            const batch = Math.min(batchSize, catchupTicks - i);
-            const newEvents = this.simulation.runTicks(batch);
-            this.events.push(...newEvents);
-            this.tickCount += batch;
-            this.ui.setLoadProgress(60 + (i / catchupTicks) * 30);
+      if (missedTicks > 1) {
+        const catchupTicks = Math.min(missedTicks, CONFIG.MAX_CATCHUP_TICKS);
+        console.log(`Catching up ${catchupTicks} ticks (${missedTicks} missed)...`);
 
-            // Yield to prevent browser freeze
-            if (i % 500 === 0 && i > 0) {
-              await new Promise(r => setTimeout(r, 0));
-            }
+        const batchSize = 100;
+        for (let i = 0; i < catchupTicks; i += batchSize) {
+          const batch = Math.min(batchSize, catchupTicks - i);
+          const newEvents = this.simulation.runTicks(batch);
+          this.events.push(...newEvents);
+          this.tickCount += batch;
+          this.ui.setLoadProgress(60 + (i / catchupTicks) * 25);
+
+          // Yield to prevent browser freeze
+          if (i % 500 === 0 && i > 0) {
+            await new Promise(r => setTimeout(r, 0));
           }
+        }
 
-          if (missedTicks > CONFIG.MAX_CATCHUP_TICKS) {
-            console.log(`Capped catch-up at ${CONFIG.MAX_CATCHUP_TICKS} ticks (missed ${missedTicks})`);
+        this.simulation.tickCount = this.tickCount;
+
+        // Save caught-up state back to Supabase
+        if (connected) {
+          const catchupChunks = worldToChunks(this.world);
+          await this.storage.saveChunks(catchupChunks);
+          await this.storage.saveWorldState(this.tickCount);
+          if (this.events.length > 0) {
+            await this.storage.saveEvents(this.events.filter(e => !e.saved).slice(-50));
           }
-
-          // Save caught-up state
-          this.dirty = true;
-          await this._syncToStorage();
+          console.log('Catch-up state saved.');
         }
       }
-    } else {
-      // Generate fresh world
-      console.log('Generating new world...');
-      this.world = generateWorld(CONFIG.WORLD_WIDTH, CONFIG.WORLD_HEIGHT, CONFIG.WORLD_SEED);
-
-      // Save initial world
-      const chunks = worldToChunks(this.world);
-      await this.storage.saveChunks(chunks);
-      await this.storage.saveWorldState(0);
     }
 
+    // ─── Check for returning player ─────────────────────────────
     this.ui.setLoadProgress(90);
-
-    // Load religions and holy sites (if not loaded during catch-up)
-    if (this.religions.length === 0) {
-      this.religions = await this.storage.loadReligions();
-      this.holySites = await this.storage.loadHolySites();
-      this._assignReligionIndices();
-    }
-
-    // Load events
-    this.events = await this.storage.loadRecentEvents(50);
-
-    // Check for returning player
     const myRelId = localStorage.getItem('hotd_myReligionId');
     if (myRelId) {
       this.myReligion = this.religions.find(r => r.id === myRelId);
     }
 
-    // Create simulation if not already
-    if (!this.simulation) {
-      this.simulation = new Simulation(this.world, this.religions, this.holySites);
-      this.simulation.tickCount = this.tickCount;
-    }
-
-    // Setup renderer
+    // ─── Setup renderer ─────────────────────────────────────────
     this.ui.setLoadProgress(95);
     this._setupRenderer();
-
-    // Update stats
     this.stats = this.simulation.getStats();
 
     this.ui.setLoadProgress(100);
@@ -151,20 +157,24 @@ class Game {
     this.renderer.holySites = this.holySites;
     this.renderer.resize();
 
-    // Handle window resize
-    window.addEventListener('resize', () => this.renderer.resize());
+    // Settlement manager
+    this.settlementManager = new SettlementManager(this.world, this.religions);
+    this.settlementManager.update(this.tickCount);
+    this.renderer.settlementManager = this.settlementManager;
 
-    // Handle tile clicks
+    if (this.myReligion) {
+      this.renderer.myReligionIndex = this.myReligion.index;
+    }
+
+    window.addEventListener('resize', () => this.renderer.resize());
     this.renderer.onClick = (x, y) => this._handleTileClick(x, y);
 
-    // Center on player's territory if exists
+    // Center on player's territory
     if (this.myReligion) {
       const myIdx = this.myReligion.index;
       for (let i = 0; i < this.world.width * this.world.height; i++) {
         if (this.world.faithOwner[i] === myIdx) {
-          const tx = i % this.world.width;
-          const ty = Math.floor(i / this.world.width);
-          this.renderer.goTo(tx, ty);
+          this.renderer.goTo(i % this.world.width, Math.floor(i / this.world.width));
           break;
         }
       }
@@ -174,16 +184,18 @@ class Game {
   // ─── Game Loop ────────────────────────────────────────────────────────────
   _startGameLoop() {
     // Simulation tick
-    this.tickTimer = setInterval(() => {
-      this._tick();
-    }, CONFIG.TICK_INTERVAL_MS);
+    this.tickTimer = setInterval(() => this._tick(), CONFIG.TICK_INTERVAL_MS);
 
     // Render loop
     const renderLoop = () => {
-      if (this.renderer && this.ui.currentScreen === 'playing') {
+      if (this.renderer && (this.ui.currentScreen === 'playing' || this.choosingSpawn)) {
         this.renderer.render();
 
-        // Update tooltip
+        // Spawn picker overlay
+        if (this.choosingSpawn && this.renderer.hoveredTile) {
+          this._drawSpawnPreview();
+        }
+
         if (this.renderer.hoveredTile) {
           this.ui.updateTooltip(this.renderer.hoveredTile.x, this.renderer.hoveredTile.y);
         }
@@ -192,7 +204,7 @@ class Game {
     };
     renderLoop();
 
-    // Periodic sync to Supabase
+    // Periodic sync
     setInterval(() => {
       if (this.dirty) this._syncToStorage();
     }, CONFIG.SYNC_INTERVAL_MS);
@@ -201,7 +213,6 @@ class Game {
     setInterval(() => {
       if (this.ui.currentScreen === 'playing') {
         this.stats = this.simulation.getStats();
-        // Update religion stats
         for (const rel of this.religions) {
           const s = this.stats[rel.index];
           if (s) {
@@ -209,17 +220,13 @@ class Game {
             rel.follower_count = s.population;
           }
         }
-        // Divine power regeneration
         if (this.myReligion) {
           const myStats = this.stats[this.myReligion.index] || {};
           this.myReligion.divine_power = Math.min(200,
             (this.myReligion.divine_power || 0) + (myStats.tiles || 0) * 0.01 + 0.1
           );
-          // Miracle cooldowns
           for (const key of Object.keys(this.ui.miracleCooldowns)) {
-            if (this.ui.miracleCooldowns[key] > 0) {
-              this.ui.miracleCooldowns[key]--;
-            }
+            if (this.ui.miracleCooldowns[key] > 0) this.ui.miracleCooldowns[key]--;
           }
         }
         this.ui.refreshHUD();
@@ -234,14 +241,44 @@ class Game {
     const newEvents = this.simulation.runTicks(1);
     this.tickCount++;
     this.events.push(...newEvents);
-    this.events = this.events.slice(-200);
     this.dirty = true;
 
-    // Track dirty chunks (simplified — mark all as dirty since we can't easily track which changed)
-    // In production you'd track which tiles changed and map to chunks
-    if (this.tickCount % 5 === 0) {
-      this.renderer.minimapDirty = true;
+    if (this.settlementManager) {
+      this.settlementManager.update(this.tickCount);
+      const relEvent = this.settlementManager._processRelations(this.tickCount);
+      if (relEvent) this.events.push(relEvent);
     }
+
+    this.events = this.events.slice(-200);
+    if (this.tickCount % 5 === 0) this.renderer.minimapDirty = true;
+  }
+
+  _drawSpawnPreview() {
+    const ctx = this.renderer.ctx;
+    const tile = this.renderer.hoveredTile;
+    if (!tile) return;
+    const ts = this.renderer.tileSize;
+    const zoom = this.renderer.zoom;
+    const radius = 3;
+
+    // Draw preview circle in the pending religion's color
+    ctx.save();
+    ctx.scale(zoom, zoom);
+    ctx.translate(-this.renderer.camX, -this.renderer.camY);
+
+    const color = this.pendingReligion?.color || '#f0d060';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2 / zoom;
+    ctx.globalAlpha = 0.6 + Math.sin(Date.now() * 0.005) * 0.2;
+    ctx.beginPath();
+    ctx.arc(tile.x * ts + ts/2, tile.y * ts + ts/2, radius * ts, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.1;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    ctx.restore();
   }
 
   async _syncToStorage() {
@@ -253,15 +290,12 @@ class Game {
       await this.storage.saveChunks(chunks);
       await this.storage.saveWorldState(this.tickCount);
 
-      if (this.events.length > 0) {
-        const unsaved = this.events.filter(e => !e.saved);
-        if (unsaved.length > 0) {
-          await this.storage.saveEvents(unsaved);
-          unsaved.forEach(e => e.saved = true);
-        }
+      const unsaved = this.events.filter(e => !e.saved);
+      if (unsaved.length > 0) {
+        await this.storage.saveEvents(unsaved.slice(-30));
+        unsaved.forEach(e => e.saved = true);
       }
 
-      // Save religion stats
       if (this.myReligion) {
         const s = this.stats[this.myReligion.index] || {};
         await this.storage.updateReligionStats(this.myReligion.id, {
@@ -272,11 +306,11 @@ class Game {
       }
     } catch (err) {
       console.error('Sync error:', err);
-      this.dirty = true; // retry next interval
+      this.dirty = true;
     }
   }
 
-  // ─── Create Religion ──────────────────────────────────────────────────────
+  // ─── Create Religion (now with spawn picker) ──────────────────────────────
   async createReligion(data) {
     const id = `rel_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const religion = {
@@ -292,93 +326,85 @@ class Game {
       follower_count: 0,
     };
 
-    // Check for trait bonuses
     const fx = getCombinedEffects(data.traits);
-    if (fx.startingPowerMult) {
-      religion.divine_power *= fx.startingPowerMult;
-    }
+    if (fx.startingPowerMult) religion.divine_power *= fx.startingPowerMult;
 
+    // Store pending and enter spawn picker mode
+    this.pendingReligion = religion;
+    this.choosingSpawn = true;
+
+    // Show the map so they can pick
     this.religions.push(religion);
     this.myReligion = religion;
-    localStorage.setItem('hotd_myReligionId', id);
-
-    // Save to storage
-    await this.storage.saveReligion(religion);
-
-    // Update simulation
     this.simulation.religions = this.religions;
     this.renderer.religions = this.religions;
+    this.renderer.myReligionIndex = religion.index;
 
-    // Find a good starting location (populated, unclaimed plains/grassland)
-    let bestIdx = -1;
-    let bestScore = -1;
-    for (let i = 0; i < this.world.width * this.world.height; i++) {
-      const terrain = this.world.tiles[i];
-      const pop = this.world.population[i];
-      const owner = this.world.faithOwner[i];
-      if (owner >= 0) continue;
-      if (terrain <= TERRAIN.WATER) continue;
+    this.ui.setScreen('playing');
+    // The UI will show a spawn picker overlay
+    this.ui.showSpawnPicker = true;
+    this.ui.refreshHUD();
+  }
 
-      let score = pop;
-      if (terrain === TERRAIN.PLAINS || terrain === TERRAIN.GRASSLAND) score *= 2;
-      if (terrain === TERRAIN.FOREST) score *= 1.5;
-      // Prefer tiles away from edges
-      const x = i % this.world.width;
-      const y = Math.floor(i / this.world.width);
-      const edgeDist = Math.min(x, y, this.world.width - x, this.world.height - y);
-      score *= Math.min(1, edgeDist / 30);
+  async _finalizeSpawn(x, y) {
+    const religion = this.pendingReligion;
+    if (!religion) return;
 
-      // Randomize a bit
-      score *= 0.5 + Math.random();
+    // Check tile is valid for spawning
+    const idx = y * this.world.width + x;
+    if (this.world.tiles[idx] <= TERRAIN.WATER) return;
 
-      if (score > bestScore) {
-        bestScore = score;
-        bestIdx = i;
+    // Claim starting area
+    const startRadius = 4;
+    for (let dy = -startRadius; dy <= startRadius; dy++) {
+      for (let dx = -startRadius; dx <= startRadius; dx++) {
+        if (Math.sqrt(dx * dx + dy * dy) > startRadius) continue;
+        const tx = x + dx;
+        const ty = y + dy;
+        if (tx < 0 || tx >= this.world.width || ty < 0 || ty >= this.world.height) continue;
+        const tidx = ty * this.world.width + tx;
+        if (this.world.tiles[tidx] <= TERRAIN.WATER) continue;
+        if (this.world.faithOwner[tidx] >= 0) continue;
+        this.world.faithOwner[tidx] = religion.index;
+        this.world.faithStrength[tidx] = 100 + Math.floor(Math.random() * 100);
       }
     }
 
-    if (bestIdx >= 0) {
-      // Claim starting area (small cluster)
-      const cx = bestIdx % this.world.width;
-      const cy = Math.floor(bestIdx / this.world.width);
-      const startRadius = 3;
+    localStorage.setItem('hotd_myReligionId', religion.id);
+    await this.storage.saveReligion(religion);
 
-      for (let dy = -startRadius; dy <= startRadius; dy++) {
-        for (let dx = -startRadius; dx <= startRadius; dx++) {
-          if (Math.sqrt(dx * dx + dy * dy) > startRadius) continue;
-          const tx = cx + dx;
-          const ty = cy + dy;
-          if (tx < 0 || tx >= this.world.width || ty < 0 || ty >= this.world.height) continue;
-          const idx = ty * this.world.width + tx;
-          if (this.world.tiles[idx] <= TERRAIN.WATER) continue;
-          if (this.world.faithOwner[idx] >= 0) continue;
-          this.world.faithOwner[idx] = religion.index;
-          this.world.faithStrength[idx] = 100 + Math.floor(Math.random() * 100);
-        }
-      }
-
-      // Navigate camera there
-      this.renderer.goTo(cx, cy);
-    }
-
-    // Log event
     const event = {
       tick: this.tickCount, type: 'religion_created',
-      religionId: id, desc: `✦ ${religion.name} has manifested in the world!`
+      religionId: religion.id, desc: `✦ ${religion.name} has manifested in the world!`
     };
     this.events.push(event);
 
+    this.choosingSpawn = false;
+    this.pendingReligion = null;
+    this.ui.showSpawnPicker = false;
     this.dirty = true;
     await this._syncToStorage();
 
-    // Switch to playing
+    this.renderer.goTo(x, y);
     this.stats = this.simulation.getStats();
-    this.ui.setScreen('playing');
+    this.ui.refreshHUD();
   }
 
   // ─── Handle Tile Click ────────────────────────────────────────────────────
   _handleTileClick(x, y) {
+    // Spawn picker mode
+    if (this.choosingSpawn) {
+      this._finalizeSpawn(x, y);
+      return;
+    }
+
     if (!this.myReligion) return;
+
+    // GM tools
+    if (this.isGM && this.gmTool) {
+      this._handleGMClick(x, y);
+      return;
+    }
 
     // Miracle usage
     if (this.ui.selectedMiracle) {
@@ -418,9 +444,8 @@ class Game {
         return;
       }
 
-      const idx = y * this.world.width + x;
-      if (this.world.faithOwner[idx] !== this.myReligion.index) {
-        // Must place on own territory
+      const tidx = y * this.world.width + x;
+      if (this.world.faithOwner[tidx] !== this.myReligion.index) {
         this.placingHolySite = null;
         return;
       }
@@ -452,24 +477,128 @@ class Game {
       return;
     }
 
-    // Regular click — claim unclaimed tile if affordable
-    const idx = y * this.world.width + x;
-    if (this.world.faithOwner[idx] === -1 && this.world.tiles[idx] > TERRAIN.WATER) {
+    // Regular click — claim unclaimed tile
+    const tidx = y * this.world.width + x;
+    if (this.world.faithOwner[tidx] === -1 && this.world.tiles[tidx] > TERRAIN.WATER) {
       if ((this.myReligion.divine_power || 0) >= 2) {
-        this.world.faithOwner[idx] = this.myReligion.index;
-        this.world.faithStrength[idx] = 50;
+        this.world.faithOwner[tidx] = this.myReligion.index;
+        this.world.faithStrength[tidx] = 50;
         this.myReligion.divine_power -= 2;
         this.dirty = true;
         this.renderer.markDirty();
       }
     }
   }
+
+  // ─── GM Tools ─────────────────────────────────────────────────────────────
+  tryGMLogin(password) {
+    if (password === GM_PASSWORD) {
+      this.isGM = true;
+      return true;
+    }
+    return false;
+  }
+
+  _handleGMClick(x, y) {
+    const radius = 8;
+    switch (this.gmTool) {
+      case 'smite':
+        // Destroy everything in radius
+        for (let dy = -radius; dy <= radius; dy++) {
+          for (let dx = -radius; dx <= radius; dx++) {
+            if (Math.sqrt(dx*dx+dy*dy) > radius) continue;
+            const tx = x+dx, ty = y+dy;
+            if (tx<0||tx>=this.world.width||ty<0||ty>=this.world.height) continue;
+            const i = ty*this.world.width+tx;
+            this.world.population[i] = 0;
+            this.world.faithOwner[i] = -1;
+            this.world.faithStrength[i] = 0;
+          }
+        }
+        this.events.push({ tick: this.tickCount, type: 'gm_smite', x, y,
+          desc: `💀 The Divine Hand smote the land at (${x},${y})!` });
+        break;
+
+      case 'bless_area':
+        for (let dy = -radius; dy <= radius; dy++) {
+          for (let dx = -radius; dx <= radius; dx++) {
+            if (Math.sqrt(dx*dx+dy*dy) > radius) continue;
+            const tx = x+dx, ty = y+dy;
+            if (tx<0||tx>=this.world.width||ty<0||ty>=this.world.height) continue;
+            const i = ty*this.world.width+tx;
+            if (this.world.tiles[i] <= TERRAIN.WATER) continue;
+            const cap = TERRAIN_POP_CAP[this.world.tiles[i]] || 100;
+            this.world.population[i] = Math.min(cap, this.world.population[i] + 30);
+          }
+        }
+        this.events.push({ tick: this.tickCount, type: 'gm_bless', x, y,
+          desc: `🌟 The Creator blessed the land at (${x},${y})!` });
+        break;
+
+      case 'purge_faith':
+        for (let dy = -radius; dy <= radius; dy++) {
+          for (let dx = -radius; dx <= radius; dx++) {
+            if (Math.sqrt(dx*dx+dy*dy) > radius) continue;
+            const tx = x+dx, ty = y+dy;
+            if (tx<0||tx>=this.world.width||ty<0||ty>=this.world.height) continue;
+            const i = ty*this.world.width+tx;
+            this.world.faithOwner[i] = -1;
+            this.world.faithStrength[i] = 0;
+          }
+        }
+        this.events.push({ tick: this.tickCount, type: 'gm_purge', x, y,
+          desc: `🌀 All faith was purged from (${x},${y})!` });
+        break;
+    }
+
+    this.dirty = true;
+    this.renderer.markDirty();
+  }
+
+  async gmResetWorld() {
+    if (!this.isGM) return;
+
+    const newSeed = Date.now() % 100000;
+    this.world = generateWorld(CONFIG.WORLD_WIDTH, CONFIG.WORLD_HEIGHT, newSeed);
+    this.tickCount = 0;
+    this.religions = [];
+    this.holySites = [];
+    this.events = [{ tick: 0, type: 'gm_reset', desc: '🌍 The world has been reset by the Creator!' }];
+    this.myReligion = null;
+    localStorage.removeItem('hotd_myReligionId');
+
+    // Clear Supabase
+    if (this.storage.connected) {
+      try {
+        await this.storage.supabase.from('religions').delete().neq('id', '');
+        await this.storage.supabase.from('holy_sites').delete().neq('id', '');
+        await this.storage.supabase.from('world_events').delete().neq('id', 0);
+      } catch (e) { console.error('GM reset cleanup error:', e); }
+
+      const chunks = worldToChunks(this.world);
+      await this.storage.saveChunks(chunks);
+      await this.storage.saveWorldState(0);
+      await this.storage.saveEvents(this.events);
+    }
+
+    // Reinitialize
+    this.simulation = new Simulation(this.world, this.religions, this.holySites);
+    this.settlementManager = new SettlementManager(this.world, this.religions);
+    this.renderer.world = this.world;
+    this.renderer.religions = this.religions;
+    this.renderer.holySites = this.holySites;
+    this.renderer.settlementManager = this.settlementManager;
+    this.renderer.markDirty();
+    this.stats = {};
+
+    this.ui.setScreen('menu');
+  }
 }
 
 // ─── Boot ────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
   const game = new Game();
-  window.game = game; // expose for debugging
+  window.game = game;
   game.init().catch(err => {
     console.error('Game init failed:', err);
     document.getElementById('ui-layer').innerHTML = `

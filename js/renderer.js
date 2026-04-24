@@ -11,7 +11,6 @@ class Renderer {
     this.world = world;
     this.religions = religions || [];
 
-    // Viewport
     this.zoom = 3;
     this.minZoom = 1;
     this.maxZoom = 12;
@@ -19,24 +18,19 @@ class Renderer {
     this.camY = 0;
     this.tileSize = CONFIG.TILE_SIZE;
 
-    // Interaction
     this.isDragging = false;
     this.dragStartX = 0;
     this.dragStartY = 0;
     this.hoveredTile = null;
     this.selectedMiracle = null;
 
-    // Cached images
-    this.terrainBuffer = null;
-    this.terrainDirty = true;
-    this.faithBuffer = null;
-    this.faithDirty = true;
-    this.minimapBuffer = null;
     this.minimapDirty = true;
-
-    // Animation
-    this.animFrame = null;
     this.time = 0;
+
+    this.settlementManager = null;
+    this.myReligionIndex = -1;
+    this.people = [];
+    this._lastPeopleUpdate = 0;
 
     this._setupEvents();
   }
@@ -44,27 +38,20 @@ class Renderer {
   _setupEvents() {
     const c = this.canvas;
 
-    // Mouse wheel zoom
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
       const rect = c.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
-
-      // Zoom toward mouse position
       const worldXBefore = (mx / this.zoom) + this.camX;
       const worldYBefore = (my / this.zoom) + this.camY;
-
       const delta = e.deltaY > 0 ? -0.5 : 0.5;
       this.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.zoom + delta));
-
       this.camX = worldXBefore - (mx / this.zoom);
       this.camY = worldYBefore - (my / this.zoom);
       this._clampCamera();
-      this.faithDirty = true;
     });
 
-    // Pan
     c.addEventListener('mousedown', (e) => {
       if (e.button === 0) {
         this.isDragging = true;
@@ -84,10 +71,7 @@ class Renderer {
         this._clampCamera();
         this.dragStartX = e.clientX;
         this.dragStartY = e.clientY;
-        this.faithDirty = true;
       }
-
-      // Hover detection
       const rect = c.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
@@ -114,7 +98,6 @@ class Renderer {
       this.isDragging = false;
     });
 
-    // Touch events for mobile
     let lastTouchDist = 0;
     c.addEventListener('touchstart', (e) => {
       e.preventDefault();
@@ -124,10 +107,7 @@ class Renderer {
         this.dragStartY = e.touches[0].clientY;
         this.dragMoved = false;
       } else if (e.touches.length === 2) {
-        lastTouchDist = Math.hypot(
-          e.touches[0].clientX - e.touches[1].clientX,
-          e.touches[0].clientY - e.touches[1].clientY
-        );
+        lastTouchDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
       }
     }, { passive: false });
 
@@ -143,16 +123,11 @@ class Renderer {
         this.dragStartX = e.touches[0].clientX;
         this.dragStartY = e.touches[0].clientY;
       } else if (e.touches.length === 2) {
-        const dist = Math.hypot(
-          e.touches[0].clientX - e.touches[1].clientX,
-          e.touches[0].clientY - e.touches[1].clientY
-        );
-        const delta = (dist - lastTouchDist) * 0.01;
-        this.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.zoom + delta));
+        const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        this.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, this.zoom + (dist - lastTouchDist) * 0.01));
         lastTouchDist = dist;
         this._clampCamera();
       }
-      this.faithDirty = true;
     }, { passive: false });
 
     c.addEventListener('touchend', (e) => {
@@ -170,7 +145,6 @@ class Renderer {
       this.isDragging = false;
     });
 
-    // Minimap click to navigate
     this.miniCanvas.addEventListener('click', (e) => {
       const rect = this.miniCanvas.getBoundingClientRect();
       const mx = e.clientX - rect.left;
@@ -180,7 +154,6 @@ class Renderer {
       this.camX = (mx * scaleX) - (this.canvas.width / this.zoom / 2);
       this.camY = (my * scaleY) - (this.canvas.height / this.zoom / 2);
       this._clampCamera();
-      this.faithDirty = true;
     });
   }
 
@@ -196,17 +169,60 @@ class Renderer {
     if (!parent) return;
     this.canvas.width = parent.clientWidth;
     this.canvas.height = parent.clientHeight;
-    this.terrainDirty = true;
-    this.faithDirty = true;
   }
 
-  markDirty() {
-    this.terrainDirty = true;
-    this.faithDirty = true;
-    this.minimapDirty = true;
+  markDirty() { this.minimapDirty = true; }
+
+  _isHiddenFromMe(ownerIndex) {
+    if (ownerIndex === this.myReligionIndex) return false;
+    const rel = this.religions[ownerIndex];
+    if (!rel) return false;
+    const fx = getCombinedEffects(rel.traits || []);
+    if (!fx.hidden) return false;
+    // Secretive religions are visible when zoomed in close (findable)
+    return this.zoom < 6;
   }
 
-  // ─── Main render ──────────────────────────────────────────────────────────
+  _updatePeople() {
+    if (this.time - this._lastPeopleUpdate < 30) return;
+    this._lastPeopleUpdate = this.time;
+    const w = this.world;
+    const ts = this.tileSize;
+    const zoom = this.zoom;
+    if (zoom < 4) { this.people = []; return; }
+
+    const cw = this.canvas.width;
+    const ch = this.canvas.height;
+    const startX = Math.max(0, Math.floor(this.camX / ts));
+    const startY = Math.max(0, Math.floor(this.camY / ts));
+    const endX = Math.min(w.width, Math.ceil((this.camX + cw / zoom) / ts) + 1);
+    const endY = Math.min(w.height, Math.ceil((this.camY + ch / zoom) / ts) + 1);
+
+    this.people = [];
+    const maxPeople = 400;
+    let count = 0;
+
+    for (let y = startY; y < endY && count < maxPeople; y++) {
+      for (let x = startX; x < endX && count < maxPeople; x++) {
+        const idx = y * w.width + x;
+        if (w.tiles[idx] <= TERRAIN.WATER) continue;
+        const pop = w.population[idx];
+        if (pop < 15) continue;
+        const owner = w.faithOwner[idx];
+        if (owner >= 0 && this._isHiddenFromMe(owner)) continue;
+
+        const numPeople = pop >= 80 ? 3 : pop >= 40 ? 2 : 1;
+        for (let i = 0; i < numPeople && count < maxPeople; i++) {
+          const seed = x * 997 + y * 641 + i * 131;
+          const wobbleX = Math.sin(this.time * 0.02 + seed) * ts * 0.3;
+          const wobbleY = Math.cos(this.time * 0.015 + seed * 0.7) * ts * 0.3;
+          this.people.push({ px: x * ts + ts * 0.5 + wobbleX, py: y * ts + ts * 0.5 + wobbleY, owner });
+          count++;
+        }
+      }
+    }
+  }
+
   render() {
     this.time++;
     const ctx = this.ctx;
@@ -216,11 +232,9 @@ class Renderer {
     const cw = this.canvas.width;
     const ch = this.canvas.height;
 
-    // Clear
     ctx.fillStyle = '#0a0a1a';
     ctx.fillRect(0, 0, cw, ch);
 
-    // Calculate visible tile range
     const startTileX = Math.max(0, Math.floor(this.camX / ts));
     const startTileY = Math.max(0, Math.floor(this.camY / ts));
     const endTileX = Math.min(w.width, Math.ceil((this.camX + cw / zoom) / ts) + 1);
@@ -229,11 +243,9 @@ class Renderer {
     ctx.save();
     ctx.scale(zoom, zoom);
     ctx.translate(-this.camX, -this.camY);
-
-    // Disable image smoothing for pixel art
     ctx.imageSmoothingEnabled = false;
 
-    // Draw tiles
+    // ─── Terrain + Faith ────────────────────────────────────────
     for (let y = startTileY; y < endTileY; y++) {
       for (let x = startTileX; x < endTileX; x++) {
         const idx = y * w.width + x;
@@ -241,121 +253,210 @@ class Renderer {
         const owner = w.faithOwner[idx];
         const faith = w.faithStrength[idx];
         const pop = w.population[idx];
-
         const px = x * ts;
         const py = y * ts;
 
-        // Base terrain color
         ctx.fillStyle = TERRAIN_COLORS[terrain] || '#000';
         ctx.fillRect(px, py, ts, ts);
 
-        // Pixel art detail — subtle dithering for terrain variety
-        if (terrain !== TERRAIN.DEEP_WATER && terrain !== TERRAIN.WATER) {
+        // Dithering
+        if (terrain > TERRAIN.WATER) {
           const hash = ((x * 7 + y * 13) ^ (x * 3)) & 0xFF;
-          if (hash < 40) {
-            ctx.fillStyle = 'rgba(0,0,0,0.12)';
-            ctx.fillRect(px, py, ts, ts);
-          } else if (hash > 215) {
-            ctx.fillStyle = 'rgba(255,255,255,0.08)';
-            ctx.fillRect(px, py, ts, ts);
-          }
+          if (hash < 40) { ctx.fillStyle = 'rgba(0,0,0,0.12)'; ctx.fillRect(px, py, ts, ts); }
+          else if (hash > 215) { ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fillRect(px, py, ts, ts); }
         }
 
-        // Water animation
+        // Water shimmer
         if (terrain === TERRAIN.DEEP_WATER || terrain === TERRAIN.WATER) {
-          const wave = Math.sin((x + this.time * 0.05) * 0.5) * 0.5 + 0.5;
-          if (wave > 0.7) {
+          if (Math.sin((x + this.time * 0.05) * 0.5) > 0.4) {
             ctx.fillStyle = 'rgba(255,255,255,0.06)';
             ctx.fillRect(px, py, ts, ts);
           }
         }
 
         // Faith overlay
-        if (owner >= 0 && this.religions[owner]) {
-          const rel = this.religions[owner];
+        if (owner >= 0 && this.religions[owner] && !this._isHiddenFromMe(owner)) {
           const alpha = 0.2 + (faith / 255) * 0.55;
-          ctx.fillStyle = rel.color;
+          ctx.fillStyle = this.religions[owner].color;
           ctx.globalAlpha = alpha;
           ctx.fillRect(px, py, ts, ts);
           ctx.globalAlpha = 1;
-
-          // Strong faith marker (small dot)
-          if (faith > 180 && zoom >= 3) {
-            ctx.fillStyle = rel.color;
-            ctx.globalAlpha = 0.8;
-            const dotSize = Math.max(1, ts * 0.3);
-            ctx.fillRect(px + ts / 2 - dotSize / 2, py + ts / 2 - dotSize / 2, dotSize, dotSize);
-            ctx.globalAlpha = 1;
-          }
         }
 
-        // Population indicator (at higher zoom)
-        if (zoom >= 5 && pop > 0 && terrain > TERRAIN.WATER) {
+        // Dwelling dots at medium zoom
+        if (zoom >= 3 && pop > 20 && terrain > TERRAIN.WATER) {
           const popRatio = pop / (TERRAIN_POP_CAP[terrain] || 100);
-          if (popRatio > 0.3) {
-            ctx.fillStyle = 'rgba(255,255,200,0.3)';
-            const dotSize = Math.max(1, ts * 0.2 * popRatio);
-            ctx.fillRect(px + ts - dotSize - 1, py + 1, dotSize, dotSize);
+          if (popRatio > 0.2) {
+            const numDots = Math.min(4, Math.floor(popRatio * 5));
+            const dotColor = (owner >= 0 && this.religions[owner] && !this._isHiddenFromMe(owner))
+              ? this.religions[owner].color : 'rgba(200,180,140,0.5)';
+            ctx.fillStyle = dotColor;
+            ctx.globalAlpha = 0.35;
+            for (let d = 0; d < numDots; d++) {
+              const dx = ((x * 3 + d * 7 + y) % 3) * (ts / 3) + ts * 0.1;
+              const dy2 = ((y * 5 + d * 11 + x) % 3) * (ts / 3) + ts * 0.1;
+              ctx.fillRect(px + dx, py + dy2, Math.max(1, ts * 0.15), Math.max(1, ts * 0.15));
+            }
+            ctx.globalAlpha = 1;
           }
         }
       }
     }
 
-    // Draw holy sites
-    if (this.holySites) {
-      for (const hs of this.holySites) {
-        const px = hs.tile_x * ts;
-        const py = hs.tile_y * ts;
-        if (px < this.camX * ts || py < this.camY * ts) continue;
+    // ─── Settlements ────────────────────────────────────────────
+    if (this.settlementManager && zoom >= 2) {
+      const visible = this.settlementManager.getVisibleSettlements(startTileX, startTileY, endTileX, endTileY);
+      for (const s of visible) {
+        if (s.owner >= 0 && this._isHiddenFromMe(s.owner)) continue;
+        const st = SETTLEMENT_TYPES[s.type];
+        if (!st) continue;
+        const px = s.x * ts;
+        const py = s.y * ts;
+        const relColor = (s.owner >= 0 && this.religions[s.owner]) ? this.religions[s.owner].color : '#aaa';
+        const bSize = Math.max(2, ts * (0.5 + st.size * 0.15));
 
-        const rel = this.religions.find(r => r.id === hs.religion_id);
-        if (!rel) continue;
+        // Walls for cities
+        if (s.type === 'CAPITAL' || s.type === 'CITY') {
+          ctx.fillStyle = 'rgba(0,0,0,0.4)';
+          ctx.fillRect(px + ts/2 - bSize/2 - 1, py + ts/2 - bSize/2 - 1, bSize + 2, bSize + 2);
+        }
+        // Building
+        ctx.fillStyle = st.color;
+        ctx.globalAlpha = 0.85;
+        ctx.fillRect(px + ts/2 - bSize/2, py + ts/2 - bSize/2, bSize, bSize);
+        // Roof
+        ctx.fillStyle = relColor;
+        ctx.globalAlpha = 0.7;
+        ctx.fillRect(px + ts/2 - bSize/2, py + ts/2 - bSize/2, bSize, Math.max(1, bSize * 0.3));
+        ctx.globalAlpha = 1;
 
-        // Glowing marker
-        const pulse = Math.sin(this.time * 0.1) * 0.3 + 0.7;
-        ctx.fillStyle = rel.color;
-        ctx.globalAlpha = pulse;
+        // Capital crown
+        if (s.isCapital) {
+          const crownPulse = 0.85 + Math.sin(this.time * 0.08) * 0.15;
+          ctx.fillStyle = '#f0d060';
+          ctx.globalAlpha = crownPulse;
+          const cs2 = Math.max(1, ts * 0.25);
+          ctx.fillRect(px + ts/2 - cs2/2, py + ts/2 - bSize/2 - cs2 - 1, cs2, cs2);
+          ctx.globalAlpha = 1;
+        }
 
-        const size = hs.site_type === 'cathedral' ? ts * 1.5 : hs.site_type === 'temple' ? ts * 1.2 : ts;
-        ctx.fillRect(px + (ts - size) / 2, py + (ts - size) / 2, size, size);
+        // Label
+        if (zoom >= 5) {
+          ctx.fillStyle = '#fff';
+          ctx.globalAlpha = 0.8;
+          ctx.font = `${Math.max(1, 2.5 / zoom * ts)}px monospace`;
+          ctx.textAlign = 'center';
+          ctx.fillText(s.name, px + ts/2, py + ts/2 + bSize/2 + 3/zoom * ts);
+          ctx.globalAlpha = 1;
+        }
+      }
+    }
 
-        // Cross/marker in center
-        ctx.fillStyle = '#fff';
-        ctx.globalAlpha = 0.9;
-        const cs = Math.max(1, size * 0.3);
-        ctx.fillRect(px + ts / 2 - cs / 2, py + ts / 2 - cs, cs, cs * 2);
-        ctx.fillRect(px + ts / 2 - cs, py + ts / 2 - cs / 2, cs * 2, cs);
-
+    // ─── People ─────────────────────────────────────────────────
+    this._updatePeople();
+    if (zoom >= 4) {
+      const personSize = Math.max(0.5, ts * 0.18);
+      for (const person of this.people) {
+        const rc = (person.owner >= 0 && this.religions[person.owner]) ? this.religions[person.owner].color : '#d4c8a0';
+        ctx.fillStyle = rc;
+        ctx.globalAlpha = 0.7;
+        ctx.fillRect(person.px - personSize/2, person.py - personSize/2, personSize, personSize);
+        ctx.fillStyle = '#e8d8c0';
+        ctx.globalAlpha = 0.6;
+        ctx.fillRect(person.px - personSize/4, person.py - personSize, personSize/2, personSize/2);
         ctx.globalAlpha = 1;
       }
     }
 
-    // Hover highlight
+    // ─── Holy Sites ─────────────────────────────────────────────
+    if (this.holySites) {
+      for (const hs of this.holySites) {
+        const rel = this.religions.find(r => r.id === hs.religion_id);
+        if (!rel) continue;
+        if (rel.index !== undefined && this._isHiddenFromMe(rel.index)) continue;
+        if (hs.tile_x < startTileX - 3 || hs.tile_x > endTileX + 3 || hs.tile_y < startTileY - 3 || hs.tile_y > endTileY + 3) continue;
+
+        const px = hs.tile_x * ts;
+        const py = hs.tile_y * ts;
+        const pulse = Math.sin(this.time * 0.08) * 0.2 + 0.8;
+        const isCath = hs.site_type === 'cathedral';
+        const isTemp = hs.site_type === 'temple';
+
+        // Glow
+        ctx.fillStyle = rel.color;
+        ctx.globalAlpha = 0.06 * pulse;
+        const glowR = (isCath ? 6 : isTemp ? 4 : 2.5) * ts;
+        ctx.beginPath();
+        ctx.arc(px + ts/2, py + ts/2, glowR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        // Base
+        const bw = (isCath ? 2.5 : isTemp ? 1.8 : 1.2) * ts;
+        const bh = (isCath ? 2.2 : isTemp ? 1.5 : 1.0) * ts;
+        ctx.fillStyle = '#1a1a2e';
+        ctx.globalAlpha = 0.6;
+        ctx.fillRect(px + ts/2 - bw/2, py + ts/2 - bh/2, bw, bh);
+
+        // Structure
+        ctx.fillStyle = rel.color;
+        ctx.globalAlpha = 0.9 * pulse;
+        const sw = bw * 0.8;
+        const sh = bh * 0.8;
+        ctx.fillRect(px + ts/2 - sw/2, py + ts/2 - sh/2, sw, sh);
+
+        // Spire
+        ctx.fillStyle = '#fff';
+        ctx.globalAlpha = 0.9;
+        const cs = Math.max(1, ts * 0.2);
+        if (isCath) {
+          for (let sp = -1; sp <= 1; sp++) {
+            const spH = sp === 0 ? cs * 3 : cs * 2;
+            ctx.fillRect(px + ts/2 + sp * cs * 1.5 - cs/4, py + ts/2 - sh/2 - spH, cs/2, spH);
+          }
+          ctx.fillRect(px + ts/2 - cs, py + ts/2 - sh/2 - cs * 3 - cs/2, cs * 2, cs/2);
+        } else if (isTemp) {
+          ctx.fillRect(px + ts/2 - cs/4, py + ts/2 - sh/2 - cs * 2, cs/2, cs * 2);
+          ctx.fillRect(px + ts/2 - cs/2, py + ts/2 - sh/2 - cs * 2, cs, cs/3);
+        } else {
+          ctx.fillRect(px + ts/2 - cs/4, py + ts/2 - sh/2 - cs, cs/2, cs);
+        }
+        ctx.globalAlpha = 1;
+
+        if (zoom >= 4) {
+          const label = isCath ? 'Cathedral' : isTemp ? 'Temple' : 'Shrine';
+          ctx.fillStyle = rel.color;
+          ctx.globalAlpha = 0.7;
+          ctx.font = `${Math.max(1, 2 / zoom * ts)}px monospace`;
+          ctx.textAlign = 'center';
+          ctx.fillText(label, px + ts/2, py + ts/2 + bh/2 + 3/zoom * ts);
+          ctx.globalAlpha = 1;
+        }
+      }
+    }
+
+    // ─── Hover ──────────────────────────────────────────────────
     if (this.hoveredTile) {
       const hx = this.hoveredTile.x * ts;
       const hy = this.hoveredTile.y * ts;
       ctx.strokeStyle = this.selectedMiracle ? '#ff4444' : '#ffffff';
       ctx.lineWidth = 1 / zoom;
       ctx.strokeRect(hx, hy, ts, ts);
-
-      // Miracle radius preview
       if (this.selectedMiracle) {
         const m = CONFIG.MIRACLES[this.selectedMiracle];
         if (m) {
-          ctx.strokeStyle = 'rgba(255, 60, 60, 0.3)';
+          ctx.strokeStyle = 'rgba(255,60,60,0.3)';
           ctx.lineWidth = 1 / zoom;
           ctx.beginPath();
-          ctx.arc(hx + ts / 2, hy + ts / 2, m.radius * ts, 0, Math.PI * 2);
+          ctx.arc(hx + ts/2, hy + ts/2, m.radius * ts, 0, Math.PI * 2);
           ctx.stroke();
-          ctx.fillStyle = 'rgba(255, 60, 60, 0.08)';
+          ctx.fillStyle = 'rgba(255,60,60,0.08)';
           ctx.fill();
         }
       }
     }
 
     ctx.restore();
-
-    // ─── Render minimap ─────────────────────────────────────────
     this._renderMinimap();
   }
 
@@ -365,64 +466,44 @@ class Renderer {
     const mH = this.miniCanvas.height;
     const w = this.world;
 
-    // Only full redraw when dirty (expensive for 300x300)
     if (this.minimapDirty) {
-      // Use ImageData for speed
       const imgData = mCtx.createImageData(mW, mH);
       const data = imgData.data;
       const scaleX = w.width / mW;
       const scaleY = w.height / mH;
-
       for (let py = 0; py < mH; py++) {
         for (let px = 0; px < mW; px++) {
           const wx = Math.floor(px * scaleX);
           const wy = Math.floor(py * scaleY);
           const idx = wy * w.width + wx;
-          const terrain = w.tiles[idx];
           const owner = w.faithOwner[idx];
-
           let color;
-          if (owner >= 0 && this.religions[owner]) {
+          if (owner >= 0 && this.religions[owner] && !this._isHiddenFromMe(owner)) {
             color = this._hexToRgb(this.religions[owner].color);
           } else {
-            color = this._hexToRgb(TERRAIN_COLORS[terrain] || '#000000');
+            color = this._hexToRgb(TERRAIN_COLORS[w.tiles[idx]] || '#000000');
           }
-
           const pi = (py * mW + px) * 4;
-          data[pi] = color.r;
-          data[pi + 1] = color.g;
-          data[pi + 2] = color.b;
-          data[pi + 3] = 255;
+          data[pi] = color.r; data[pi + 1] = color.g; data[pi + 2] = color.b; data[pi + 3] = 255;
         }
       }
-
       mCtx.putImageData(imgData, 0, 0);
       this.minimapDirty = false;
     }
 
-    // Draw viewport rectangle
     const scaleX = mW / (w.width * this.tileSize);
     const scaleY = mH / (w.height * this.tileSize);
-    const vx = this.camX * scaleX;
-    const vy = this.camY * scaleY;
-    const vw = (this.canvas.width / this.zoom) * scaleX;
-    const vh = (this.canvas.height / this.zoom) * scaleY;
-
     mCtx.strokeStyle = '#fff';
     mCtx.lineWidth = 1;
-    mCtx.strokeRect(vx, vy, vw, vh);
+    mCtx.strokeRect(this.camX * scaleX, this.camY * scaleY,
+      (this.canvas.width / this.zoom) * scaleX, (this.canvas.height / this.zoom) * scaleY);
   }
 
   _hexToRgb(hex) {
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    return result ? {
-      r: parseInt(result[1], 16),
-      g: parseInt(result[2], 16),
-      b: parseInt(result[3], 16),
-    } : { r: 0, g: 0, b: 0 };
+    const r = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return r ? { r: parseInt(r[1],16), g: parseInt(r[2],16), b: parseInt(r[3],16) } : { r:0, g:0, b:0 };
   }
 
-  // Navigate camera to position
   goTo(x, y) {
     this.camX = x * this.tileSize - this.canvas.width / this.zoom / 2;
     this.camY = y * this.tileSize - this.canvas.height / this.zoom / 2;
