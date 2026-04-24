@@ -4,7 +4,7 @@ A persistent, multiplayer browser god-sim where you create a religion and compet
 
 Inspired by WorldBox — but you're a god competing with other gods through faith, not armies.
 
-## 🎮 How It Works
+## 🎮 How It Worksd
 
 1. **Create a Religion** — Draw your holy symbol (pixel art), pick a sacred color, name your faith, and choose up to 5 traits from 50+ options
 2. **Enter the World** — Your followers spawn on a 300×300 procedurally generated map with continents, oceans, mountains, forests, deserts, and more
