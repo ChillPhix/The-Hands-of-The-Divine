@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Hands of The Divine</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✦</text></svg>">
+
+  <!-- Supabase JS Client -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+  <!-- Fonts -->
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap');
+  </style>
+
+  <style>
+    /* ═══════════════════════════════════════════════════════════════
+       THE HANDS OF THE DIVINE — Styles
+       Pixel art / retro god-sim aesthetic
+       ═══════════════════════════════════════════════════════════════ */
+
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg-dark: #0a0a14;
+      --bg-panel: #111128;
+      --bg-card: #0d0d20;
+      --border: #2a2a4a;
+      --text: #c8c8e0;
+      --text-dim: #666688;
+      --gold: #f0d060;
+      --gold-dim: #b89830;
+      --red: #e63946;
+      --font-pixel: 'Press Start 2P', monospace;
+      --font-body: 'VT323', monospace;
+    }
+
+    html, body {
+      width: 100%; height: 100%;
+      background: var(--bg-dark);
+      color: var(--text);
+      font-family: var(--font-body);
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    #game-container {
+      position: relative;
+      width: 100%; height: 100%;
+    }
+
+    /* ─── Canvas layers ──────────────────────────────────────────── */
+    #gameCanvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      cursor: grab;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+    #gameCanvas:active { cursor: grabbing; }
+
+    #minimapCanvas {
+      position: absolute;
+      bottom: 12px; left: 12px;
+      width: 180px; height: 180px;
+      border: 2px solid var(--border);
+      background: var(--bg-dark);
+      image-rendering: pixelated;
+      cursor: pointer;
+      z-index: 20;
+      box-shadow: 0 0 20px rgba(0,0,0,0.8);
+    }
+
+    #ui-layer {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 10;
+    }
+    #ui-layer > * { pointer-events: auto; }
+
+    /* ─── Screen base ────────────────────────────────────────────── */
+    .screen {
+      width: 100%; height: 100%;
+      position: absolute; top: 0; left: 0;
+    }
+
+    /* ─── Loading ─────────────────────────────────────────────────── */
+    .loading-screen {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: var(--bg-dark);
+    }
+    .loading-symbol {
+      font-size: 48px; color: var(--gold);
+      animation: pulse 2s ease-in-out infinite, spin 8s linear infinite;
+    }
+    .loading-title {
+      font-family: var(--font-pixel);
+      font-size: 16px; color: var(--gold);
+      letter-spacing: 4px; margin-top: 24px;
+      text-shadow: 0 0 20px rgba(240,208,96,0.3);
+    }
+    .loading-sub {
+      font-size: 18px; color: var(--text-dim);
+      margin-top: 8px; letter-spacing: 2px;
+    }
+    .loading-bar {
+      width: 200px; height: 6px; margin-top: 24px;
+      background: var(--bg-panel); border: 1px solid var(--border);
+    }
+    .loading-fill {
+      height: 100%; width: 0%;
+      background: var(--gold);
+      transition: width 0.3s;
+    }
+
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+    @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+
+    /* ─── Menu ────────────────────────────────────────────────────── */
+    .menu-screen {
+      display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(ellipse at 30% 20%, #1a0a2e 0%, var(--bg-dark) 60%);
+    }
+    .menu-stars {
+      position: absolute; inset: 0;
+      background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Ccircle cx='20' cy='30' r='1' fill='%23ffffff10'/%3E%3Ccircle cx='80' cy='90' r='0.8' fill='%23ffffff08'/%3E%3Ccircle cx='150' cy='40' r='1.2' fill='%23ffffff0c'/%3E%3Ccircle cx='120' cy='160' r='0.6' fill='%23ffffff0a'/%3E%3Ccircle cx='50' cy='140' r='1' fill='%23ffffff08'/%3E%3Ccircle cx='170' cy='120' r='0.8' fill='%23ffffff0c'/%3E%3C/svg%3E");
+      animation: drift 60s linear infinite;
+    }
+    @keyframes drift { from { transform: translateY(0); } to { transform: translateY(-200px); } }
+
+    .menu-content {
+      position: relative; z-index: 1;
+      text-align: center; padding: 32px;
+    }
+    .menu-symbol {
+      font-size: 56px; color: var(--gold);
+      text-shadow: 0 0 40px rgba(240,208,96,0.4);
+      animation: pulse 3s ease-in-out infinite;
+    }
+    .menu-title {
+      font-family: var(--font-pixel);
+      font-size: 20px; color: var(--gold);
+      letter-spacing: 4px; margin-top: 16px; line-height: 1.6;
+      text-shadow: 0 0 30px rgba(240,208,96,0.2);
+    }
+    .menu-subtitle {
+      font-size: 18px; color: var(--text-dim);
+      letter-spacing: 3px; margin-top: 8px;
+    }
+    .menu-divider {
+      width: 120px; height: 1px; margin: 24px auto;
+      background: linear-gradient(90deg, transparent, var(--gold-dim), transparent);
+    }
+    .menu-empty {
+      margin-top: 32px; color: var(--text-dim);
+      font-size: 16px; font-style: italic;
+    }
+    .menu-faiths {
+      margin-top: 32px; max-width: 400px; margin-inline: auto;
+    }
+    .menu-faiths-title {
+      font-family: var(--font-pixel);
+      font-size: 8px; letter-spacing: 3px;
+      color: var(--text-dim); margin-bottom: 12px;
+    }
+    .faith-list {
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .faith-badge {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 16px; border-radius: 4px;
+      border: 1px solid; font-size: 16px;
+    }
+    .faith-badge-color {
+      width: 10px; height: 10px; border-radius: 2px;
+    }
+    .faith-badge-tiles {
+      margin-left: auto; font-size: 14px; opacity: 0.5;
+    }
+    .menu-info {
+      margin-top: 24px; display: flex; gap: 24px; justify-content: center;
+      font-size: 14px; color: var(--text-dim);
+    }
+
+    /* ─── Buttons ─────────────────────────────────────────────────── */
+    .btn {
+      display: block; width: 280px; margin: 12px auto 0;
+      padding: 14px 24px;
+      font-family: var(--font-pixel); font-size: 10px;
+      letter-spacing: 3px;
+      border: 2px solid var(--gold-dim);
+      background: linear-gradient(135deg, #1a0a2e, #2a1a3e);
+      color: var(--gold); cursor: pointer;
+      transition: all 0.15s;
+      image-rendering: pixelated;
+    }
+    .btn:hover { transform: scale(1.03); border-color: var(--gold); box-shadow: 0 0 16px rgba(240,208,96,0.2); }
+    .btn:active { transform: scale(0.98); }
+    .btn.disabled { opacity: 0.3; pointer-events: none; }
+    .btn-primary { background: linear-gradient(135deg, #2a1040, #3a2050); }
+    .btn-sm {
+      width: 100%; padding: 6px 10px;
+      font-family: var(--font-body); font-size: 14px;
+      letter-spacing: 1px; margin: 4px 0;
+      border-width: 1px;
+    }
+    .btn-back {
+      position: absolute; top: 16px; left: 16px;
+      background: none; border: 1px solid var(--border);
+      color: var(--text-dim); font-family: var(--font-body);
+      font-size: 16px; padding: 6px 14px; cursor: pointer;
+    }
+    .btn-back:hover { color: var(--text); border-color: var(--text-dim); }
+
+    /* ─── Create Screen ──────────────────────────────────────────── */
+    .create-screen {
+      display: flex; align-items: flex-start; justify-content: center;
+      background: radial-gradient(ellipse at 60% 80%, #0a1a2e 0%, var(--bg-dark) 60%);
+      overflow-y: auto; padding: 24px 16px;
+    }
+    .create-panel {
+      position: relative;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 28px;
+      max-width: 520px; width: 100%;
+    }
+    .create-title {
+      font-family: var(--font-pixel);
+      font-size: 14px; color: var(--gold);
+      text-align: center; letter-spacing: 4px;
+      margin-bottom: 20px;
+    }
+    .create-section { margin-top: 16px; }
+    .create-row {
+      display: flex; gap: 20px; margin-top: 16px;
+      flex-wrap: wrap;
+    }
+    .create-label {
+      display: block;
+      font-family: var(--font-pixel);
+      font-size: 7px; letter-spacing: 2px;
+      color: var(--text-dim); margin-bottom: 8px;
+      text-transform: uppercase;
+    }
+    .trait-count { color: var(--gold); }
+    .create-input {
+      width: 100%; padding: 10px 14px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 2px; color: var(--text);
+      font-family: var(--font-body); font-size: 20px;
+      outline: none;
+    }
+    .create-input:focus { border-color: var(--gold-dim); }
+    .create-input::placeholder { color: var(--text-dim); }
+
+    /* Symbol drawing */
+    .symbol-area {
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+    }
+    #symbolCanvas {
+      width: 128px; height: 128px;
+      border: 2px solid var(--border);
+      background: var(--bg-card);
+      image-rendering: pixelated;
+      cursor: crosshair;
+    }
+    .symbol-tools {
+      display: flex; gap: 4px;
+    }
+    .sym-tool {
+      width: 32px; height: 32px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 2px; cursor: pointer; font-size: 14px;
+    }
+    .sym-tool.active { border-color: var(--gold); background: #1a1a3e; }
+
+    /* Colors */
+    .color-grid {
+      display: flex; flex-wrap: wrap; gap: 8px;
+    }
+    .color-btn {
+      width: 28px; height: 28px; border-radius: 2px;
+      border: 2px solid transparent; cursor: pointer;
+      transition: all 0.1s;
+    }
+    .color-btn:hover { transform: scale(1.15); }
+    .color-btn.active { border-color: #fff; transform: scale(1.2); box-shadow: 0 0 8px currentColor; }
+
+    /* Traits */
+    .cat-tabs {
+      display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px;
+    }
+    .cat-tab {
+      padding: 4px 10px;
+      font-family: var(--font-body); font-size: 14px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      color: var(--text-dim); cursor: pointer;
+      border-radius: 2px;
+    }
+    .cat-tab.active { border-color: var(--gold-dim); color: var(--gold); background: #1a1a3e; }
+
+    .traits-grid {
+      display: flex; flex-direction: column; gap: 4px;
+      max-height: 280px; overflow-y: auto;
+      padding-right: 4px;
+    }
+    .traits-grid::-webkit-scrollbar { width: 4px; }
+    .traits-grid::-webkit-scrollbar-track { background: var(--bg-card); }
+    .traits-grid::-webkit-scrollbar-thumb { background: var(--border); }
+
+    .trait-card {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 2px; cursor: pointer;
+      transition: all 0.12s;
+    }
+    .trait-card:hover { border-color: var(--text-dim); }
+    .trait-card.selected { background: #1a1a3e; }
+    .trait-card.disabled { opacity: 0.3; cursor: not-allowed; }
+    .trait-icon { font-size: 20px; flex-shrink: 0; }
+    .trait-info { flex: 1; min-width: 0; }
+    .trait-name { font-size: 16px; font-weight: bold; color: var(--text); }
+    .trait-desc { font-size: 13px; color: var(--text-dim); margin-top: 1px; }
+    .trait-cat { font-size: 11px; flex-shrink: 0; }
+
+    /* Preview */
+    .create-preview {
+      display: flex; align-items: center; gap: 16px;
+      padding: 16px; margin-top: 16px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 2px;
+    }
+    #previewSymbol {
+      image-rendering: pixelated;
+      width: 48px; height: 48px;
+    }
+    .preview-name {
+      font-family: var(--font-pixel); font-size: 10px;
+      letter-spacing: 2px;
+    }
+    .preview-traits {
+      display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px;
+    }
+    .preview-trait {
+      font-size: 13px; color: var(--text-dim);
+      background: var(--bg-panel); padding: 2px 6px;
+      border-radius: 2px;
+    }
+    .btn-create { margin-top: 16px; }
+
+    /* ─── HUD (in-game) ──────────────────────────────────────────── */
+    .hud-top {
+      position: absolute; top: 0; left: 0; right: 0;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 16px;
+      background: linear-gradient(180deg, rgba(10,10,20,0.95), rgba(10,10,20,0.7));
+      border-bottom: 1px solid var(--border);
+      z-index: 15;
+    }
+    .hud-religion {
+      display: flex; align-items: center; gap: 8px;
+    }
+    #hudSymbol {
+      image-rendering: pixelated;
+    }
+    .hud-name {
+      font-family: var(--font-pixel); font-size: 9px;
+      letter-spacing: 2px;
+    }
+    .hud-stats {
+      display: flex; gap: 16px;
+    }
+    .hud-stat {
+      font-size: 16px; color: var(--text-dim);
+    }
+    .divine-power { color: var(--gold) !important; }
+    .hud-tick {
+      font-size: 14px; color: var(--text-dim);
+    }
+
+    /* Miracles bar */
+    .hud-miracles {
+      position: absolute; bottom: 12px; left: 50%;
+      transform: translateX(-50%);
+      display: flex; gap: 4px; align-items: flex-end;
+      z-index: 15;
+    }
+    .miracle-btn {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 2px; padding: 8px 10px;
+      background: var(--bg-panel); border: 1px solid var(--border);
+      color: var(--text); cursor: pointer;
+      border-radius: 2px; transition: all 0.12s;
+      min-width: 64px;
+    }
+    .miracle-btn:hover:not(.disabled) { border-color: var(--gold-dim); background: #1a1a3e; }
+    .miracle-btn.active { border-color: var(--red); background: #2a0a0a; box-shadow: 0 0 10px rgba(230,57,70,0.3); }
+    .miracle-btn.disabled { opacity: 0.3; cursor: not-allowed; }
+    .miracle-icon { font-size: 20px; }
+    .miracle-name { font-family: var(--font-pixel); font-size: 6px; letter-spacing: 1px; }
+    .miracle-cost { font-size: 12px; color: var(--gold); }
+    .miracle-cd { font-size: 12px; color: var(--red); }
+    .miracle-hint {
+      position: absolute; bottom: 100%; left: 50%;
+      transform: translateX(-50%);
+      padding: 6px 14px; margin-bottom: 8px;
+      background: var(--bg-panel); border: 1px solid var(--red);
+      border-radius: 2px; font-size: 14px;
+      white-space: nowrap; color: var(--red);
+    }
+    .miracle-cancel {
+      background: none; border: none; color: var(--red);
+      cursor: pointer; margin-left: 8px; font-size: 14px;
+    }
+
+    /* Sidebar */
+    .hud-sidebar {
+      position: absolute; top: 48px; right: 0; bottom: 0;
+      width: 220px; padding: 8px;
+      background: linear-gradient(90deg, transparent, rgba(10,10,20,0.9) 20%);
+      overflow-y: auto; z-index: 14;
+    }
+    .hud-sidebar::-webkit-scrollbar { width: 3px; }
+    .hud-sidebar::-webkit-scrollbar-thumb { background: var(--border); }
+
+    .sidebar-section {
+      margin-bottom: 12px;
+      background: rgba(17,17,40,0.8);
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      padding: 8px;
+    }
+    .sidebar-title {
+      font-family: var(--font-pixel);
+      font-size: 7px; letter-spacing: 2px;
+      color: var(--gold); margin-bottom: 8px;
+    }
+
+    /* Scoreboard */
+    .scoreboard { display: flex; flex-direction: column; gap: 4px; }
+    .score-row {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 14px;
+    }
+    .score-me { background: rgba(240,208,96,0.05); padding: 2px 4px; border-radius: 2px; }
+    .score-color { width: 8px; height: 8px; border-radius: 1px; flex-shrink: 0; }
+    .score-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+    .score-bar-track { width: 40px; height: 4px; background: var(--bg-card); flex-shrink: 0; }
+    .score-bar-fill { height: 100%; transition: width 0.3s; }
+    .score-num { font-size: 12px; color: var(--text-dim); min-width: 24px; text-align: right; }
+
+    /* Event log */
+    .event-log {
+      max-height: 150px; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    .event-log::-webkit-scrollbar { width: 3px; }
+    .event-log::-webkit-scrollbar-thumb { background: var(--border); }
+    .event-row {
+      font-size: 13px; color: var(--text-dim);
+      padding: 2px 0; line-height: 1.3;
+    }
+    .event-tick {
+      font-size: 11px; color: var(--text-dim);
+      opacity: 0.4; margin-right: 4px;
+    }
+
+    /* Tooltip */
+    .hud-tooltip {
+      position: absolute; bottom: 80px; left: 200px;
+      background: var(--bg-panel); border: 1px solid var(--border);
+      padding: 8px 12px; border-radius: 2px;
+      font-size: 15px; line-height: 1.5;
+      pointer-events: none; z-index: 20;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+
+    /* ─── Responsive ─────────────────────────────────────────────── */
+    @media (max-width: 600px) {
+      .hud-sidebar { width: 160px; }
+      .hud-stats { gap: 8px; }
+      .hud-stat { font-size: 13px; }
+      .miracle-btn { min-width: 48px; padding: 6px; }
+      .miracle-name { display: none; }
+      #minimapCanvas { width: 120px; height: 120px; }
+      .menu-title { font-size: 14px; }
+      .create-panel { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+    <canvas id="minimapCanvas" width="180" height="180"></canvas>
+    <div id="ui-layer"></div>
+  </div>
+
+  <!-- Game scripts (order matters) -->
+  <script src="js/config.js"></script>
+  <script src="js/world.js"></script>
+  <script src="js/traits.js"></script>
+  <script src="js/simulation.js"></script>
+  <script src="js/renderer.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
